@@ -1,7 +1,6 @@
 # iRidi Diagnostics Scripts
 
-Автономные `sh`- и PowerShell-скрипты для быстрой диагностики серверов iRidi во
-время удалённого подключения. Linux-версии
+Автономные `sh`- и PowerShell-скрипты для быстрой диагностики серверов iRidi. Linux-версии
 работают с POSIX `sh`, включая BusyBox на HS Server; Windows-версии рассчитаны
 на штатный Windows PowerShell.
 
