@@ -39,15 +39,7 @@
 
 ```sh
 cd /tmp
-curl -fsSLO https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/linux/check_bus77_home.sh
-sh check_bus77_home.sh 2>&1 | tee check_bus77_home.txt
-```
-
-Если на сервере нет `curl`:
-
-```sh
-cd /tmp
-wget https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/linux/check_bus77_home.sh
+wget https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/linux/check_bus77_home.sh --no-check-certificate
 sh check_bus77_home.sh 2>&1 | tee check_bus77_home.txt
 ```
 
@@ -133,7 +125,7 @@ sh check_emmc_health.sh
 
 ```sh
 cd /tmp
-wget https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/linux/check_emmc_health.sh
+wget https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/linux/check_emmc_health.sh --no-check-certificate
 sh check_emmc_health.sh
 ```
 
