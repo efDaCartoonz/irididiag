@@ -5,7 +5,20 @@
 работают с POSIX `sh`, включая BusyBox на HS Server; Windows-версии рассчитаны
 на штатный Windows PowerShell.
 
-## Скрипты
+## Структура архива
+
+- `scripts/windows` — запуск с клиентского компьютера Windows;
+- `scripts/linux` — запуск на Linux, Debian и прошивках BusyBox.
+
+### Windows
+
+| Файл | Назначение |
+| --- | --- |
+| `check_iridi_cloud_windows_10_11.ps1` | Универсальная проверка облака с Windows 10/11 и PowerShell 5.1 |
+| `check_iridi_cloud_windows_7.ps1` | Универсальная проверка облака с Windows 7 и PowerShell 2.0+ |
+| `run_iridi_cloud_windows.cmd` | Простой запуск Windows: выбор продукта в меню и автоматический лог |
+
+### Linux и BusyBox
 
 | Файл | Назначение |
 | --- | --- |
@@ -15,9 +28,6 @@
 | `check_iridi_pro_ru.sh` | Проверка iRidi Pro Cloud для региона RU |
 | `check_iridi_pro_eu.sh` | Проверка iRidi Pro Cloud для региона EU |
 | `check_emmc_health.sh` | Состояние eMMC, ошибки ядра и безопасная проверка записи в корневой раздел |
-| `check_iridi_cloud_windows_10_11.ps1` | Универсальная проверка облака с Windows 10/11 и PowerShell 5.1 |
-| `check_iridi_cloud_windows_7.ps1` | Универсальная проверка облака с Windows 7 и PowerShell 2.0+ |
-| `run_iridi_cloud_windows.cmd` | Простой запуск Windows: выбор продукта в меню и автоматический лог |
 
 Облачные проверки выполняют DNS-разрешение и реальный HTTP(S) GET, показывают
 фактический IP, HTTP-статус, тип и размер полезной нагрузки. При сетевой ошибке
@@ -30,7 +40,7 @@
 
 ```sh
 cd /tmp
-curl -fsSLO https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/check_bus77_home.sh
+curl -fsSLO https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/linux/check_bus77_home.sh
 sh check_bus77_home.sh 2>&1 | tee check_bus77_home.txt
 ```
 
@@ -38,7 +48,7 @@ sh check_bus77_home.sh 2>&1 | tee check_bus77_home.txt
 
 ```sh
 cd /tmp
-wget https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/check_bus77_home.sh
+wget https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/linux/check_bus77_home.sh
 sh check_bus77_home.sh 2>&1 | tee check_bus77_home.txt
 ```
 
@@ -55,13 +65,14 @@ sh check_iridi_pro_eu.sh
 
 1. Скачайте [ZIP-архив репозитория](https://github.com/efDaCartoonz/irididiag/archive/refs/heads/main.zip).
 2. Полностью распакуйте архив.
-3. Откройте каталог `scripts` и дважды нажмите `run_iridi_cloud_windows.cmd`.
+3. Откройте каталог `scripts\windows` и дважды нажмите
+   `run_iridi_cloud_windows.cmd`.
 4. Выберите цифрой нужный продукт: i3 KNX, Bus77 Home, Bus77 Lite, iRidi Pro RU
    или iRidi Pro EU.
 
 В окне виден ход проверки каждого ресурса. После завершения окно остаётся
-открытым, а полный результат сохраняется в `scripts\logs`. Для каждого запуска
-создаётся отдельный файл с продуктом, регионом и временем в имени, например
+открытым, а полный результат сохраняется в `scripts\windows\logs`. Для каждого
+запуска создаётся отдельный файл с продуктом, регионом и временем в имени, например
 `iridi_pro_eu_20260901_143000.log`. Лаунчер сам определяет версию PowerShell и
 выбирает совместимый сценарий для Windows 7 или Windows 10/11.
 
@@ -71,7 +82,7 @@ sh check_iridi_pro_eu.sh
 
 ```powershell
 Set-Location $env:TEMP
-curl.exe -fL "https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/check_iridi_cloud_windows_10_11.ps1" -o "check_iridi_cloud_windows_10_11.ps1"
+curl.exe -fL "https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/windows/check_iridi_cloud_windows_10_11.ps1" -o "check_iridi_cloud_windows_10_11.ps1"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\check_iridi_cloud_windows_10_11.ps1 -Product bus77-home
 ```
 
@@ -90,7 +101,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\check_iridi_cloud_wind
 Скачайте файл через браузер или из `cmd.exe` штатной утилитой Windows:
 
 ```bat
-certutil.exe -urlcache -split -f "https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/check_iridi_cloud_windows_7.ps1" "%TEMP%\check_iridi_cloud_windows_7.ps1"
+certutil.exe -urlcache -split -f "https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/windows/check_iridi_cloud_windows_7.ps1" "%TEMP%\check_iridi_cloud_windows_7.ps1"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%TEMP%\check_iridi_cloud_windows_7.ps1" -Product bus77-home
 ```
 
