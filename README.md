@@ -1,13 +1,13 @@
 # iRidi Diagnostics Scripts
 
 Автономные `sh`- и PowerShell-скрипты для быстрой диагностики серверов iRidi во
-время удалённого подключения. Файлы не требуют установки Python. Linux-версии
+время удалённого подключения. Linux-версии
 работают с POSIX `sh`, включая BusyBox на HS Server; Windows-версии рассчитаны
 на штатный Windows PowerShell.
 
 ## Структура архива
 
-- `scripts/windows` — запуск с клиентского компьютера Windows;
+- `scripts/windows` — запуск с компьютера Windows;
 - `scripts/linux` — запуск на Linux, Debian и прошивках BusyBox.
 
 ### Windows
