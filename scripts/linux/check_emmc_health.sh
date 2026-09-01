@@ -52,7 +52,7 @@ fi
 set +e
 export LC_ALL=C
 
-SCRIPT_VERSION=1.1
+SCRIPT_VERSION=1.2
 
 WRITE_TEST=yes
 [ "${1:-}" = "--no-write" ] && WRITE_TEST=no
@@ -66,6 +66,7 @@ BLOCK_STATUS="не определён"
 WEAR_STATUS="недоступны"
 KERNEL_STATUS="не проверен"
 ROOT_WRITE_STATUS="не выполнена"
+ROOT_LAYER_STATUS="не определён"
 
 cleanup() {
   [ -n "$TEST_FILE" ] && rm -f "$TEST_FILE"
@@ -147,6 +148,25 @@ checksum_file() {
   elif command -v md5sum >/dev/null 2>&1; then
     md5sum "$1" 2>/dev/null | awk '{print $1}'
   fi
+}
+
+mount_record_for_path() {
+  awk -v path="$1" '
+    {
+      mount_point = $2
+      matches = 0
+      if (mount_point == "/") {
+        matches = 1
+      } else if (path == mount_point || index(path, mount_point "/") == 1) {
+        matches = 1
+      }
+      if (matches && length(mount_point) > best_length) {
+        best_length = length(mount_point)
+        record = $1 "|" $2 "|" $3 "|" $4
+      }
+    }
+    END { print record }
+  ' /proc/mounts 2>/dev/null
 }
 
 printf 'Диагностика eMMC / корневого накопителя\n'
@@ -268,6 +288,54 @@ case ",${ROOT_OPTIONS}," in
   *) ROOT_RW=no; fail "Корень не смонтирован в режиме rw." ;;
 esac
 
+if [ "$ROOT_FS" = "overlay" ]; then
+  OVERLAY_UPPER="$(printf '%s\n' "$ROOT_OPTIONS" | tr ',' '\n' | sed -n 's/^upperdir=//p' | head -n 1)"
+  OVERLAY_WORK="$(printf '%s\n' "$ROOT_OPTIONS" | tr ',' '\n' | sed -n 's/^workdir=//p' | head -n 1)"
+  printf '  Overlay upperdir: %s\n' "${OVERLAY_UPPER:-не определён}"
+  printf '  Overlay workdir: %s\n' "${OVERLAY_WORK:-не определён}"
+  if [ -z "$OVERLAY_UPPER" ] || [ -z "$OVERLAY_WORK" ]; then
+    ROOT_LAYER_STATUS="overlay без upperdir/workdir"
+    fail "Не удалось определить upperdir или workdir записываемого слоя overlay."
+  elif [ ! -d "$OVERLAY_UPPER" ] || [ ! -d "$OVERLAY_WORK" ]; then
+    ROOT_LAYER_STATUS="каталоги overlay недоступны"
+    fail "Upperdir или workdir overlay отсутствует либо недоступен."
+  else
+    OVERLAY_RECORD="$(mount_record_for_path "$OVERLAY_UPPER")"
+    OVERLAY_SOURCE="$(printf '%s' "$OVERLAY_RECORD" | cut -d '|' -f 1)"
+    OVERLAY_MOUNT_POINT="$(printf '%s' "$OVERLAY_RECORD" | cut -d '|' -f 2)"
+    OVERLAY_FS="$(printf '%s' "$OVERLAY_RECORD" | cut -d '|' -f 3)"
+    OVERLAY_OPTIONS="$(printf '%s' "$OVERLAY_RECORD" | cut -d '|' -f 4)"
+    printf '  Носитель upperdir: %s\n' "${OVERLAY_SOURCE:-не определён}"
+    printf '  Точка монтирования upperdir: %s\n' "${OVERLAY_MOUNT_POINT:-не определена}"
+    printf '  Файловая система upperdir: %s\n' "${OVERLAY_FS:-не определена}"
+    printf '  Параметры носителя upperdir: %s\n' "${OVERLAY_OPTIONS:-не определены}"
+    df -h "$OVERLAY_UPPER" 2>/dev/null | sed 's/^/  /'
+    if df -i "$OVERLAY_UPPER" >/dev/null 2>&1; then
+      printf '  Использование inode:\n'
+      df -i "$OVERLAY_UPPER" 2>/dev/null | sed 's/^/  /'
+    else
+      printf '  Использование inode: команда не поддерживается этой прошивкой.\n'
+    fi
+    case ",${OVERLAY_OPTIONS}," in
+      *,rw,*)
+        ROOT_LAYER_STATUS="overlay на ${OVERLAY_SOURCE:-неизвестном носителе}, rw"
+        ok "Носитель upperdir overlay смонтирован в режиме rw."
+        ;;
+      *,ro,*)
+        ROOT_LAYER_STATUS="носитель upperdir read-only"
+        fail "Физический блок может быть доступен, но носитель upperdir overlay смонтирован read-only."
+        ;;
+      *)
+        ROOT_LAYER_STATUS="режим носителя upperdir не определён"
+        warn "Не удалось определить режим монтирования носителя upperdir overlay."
+        ;;
+    esac
+  fi
+else
+  ROOT_LAYER_STATUS="прямая ${ROOT_FS:-неизвестная ФС} на ${ROOT_SOURCE:-неизвестном источнике}"
+  printf '  Overlay: не используется; запись идёт напрямую в корневую файловую систему.\n'
+fi
+
 separator
 printf '3. Ошибки ядра с момента загрузки\n'
 KERNEL_PATTERN='buffer i/o error|blk_update.*i/o error|print_req_error.*i/o error|i/o error.*mmcblk|ext4-fs.*error|remounting filesystem read-only|mmc.*(timed out|timeout|i/o error)|filesystem error|journal.*abort'
@@ -341,8 +409,17 @@ printf 'КРАТКИЙ ИТОГ\n'
 printf '  eMMC: %s\n' "$EMMC_STATUS"
 printf '  Основной блок: %s\n' "$BLOCK_STATUS"
 printf '  Показатели износа: %s\n' "$WEAR_STATUS"
+printf '  Слой записи корня: %s\n' "$ROOT_LAYER_STATUS"
 printf '  Ошибки ядра: %s\n' "$KERNEL_STATUS"
 printf '  Проверка записи в /: %s\n' "$ROOT_WRITE_STATUS"
+case "$ROOT_WRITE_STATUS" in
+  "ошибка записи"|"ошибка проверки"|"невозможна: корень не rw")
+    if [ "$BLOCK_STATUS" = "доступен для записи" ]; then
+      printf '  Разделение уровней: eMMC не заблокирована ядром, но запись через корень/overlay не работает.\n'
+      printf '  Вероятная область проблемы: overlay, файловая система, место/inode или параметры монтирования.\n'
+    fi
+    ;;
+esac
 if [ "$FAILURES" -eq 0 ] && [ "$ROOT_WRITE_STATUS" = "успешна" ] && [ "$KERNEL_STATUS" = "ошибок не найдено" ]; then
   printf '  Вывод: текущая запись и чтение работают; критических ошибок не обнаружено.\n'
   if [ "$WEAR_STATUS" = "недоступны" ]; then
