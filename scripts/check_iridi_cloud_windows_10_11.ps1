@@ -1,0 +1,351 @@
+# iRidi cloud diagnostics for Windows 10/11 and Windows PowerShell 5.1.
+# Examples:
+#   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\check_iridi_cloud_windows_10_11.ps1 -Product i3knx
+#   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\check_iridi_cloud_windows_10_11.ps1 -Product iridi-pro -Region EU
+
+[CmdletBinding()]
+param(
+    [ValidateSet("i3knx", "bus77-home", "bus77-lite", "iridi-pro")]
+    [string]$Product = "i3knx",
+
+    [ValidateSet("RU", "EU")]
+    [string]$Region = "RU"
+)
+
+if ($PSVersionTable.PSVersion.Major -lt 5) {
+    Write-Host "[WARN] Windows PowerShell 5.1 is recommended for this script."
+}
+
+$ErrorActionPreference = "Continue"
+$MaxAttempts = 3
+$RetryDelaySeconds = 1
+$ConnectTimeoutMilliseconds = 6000
+$RequestTimeoutMilliseconds = 15000
+$GateTimeoutMilliseconds = 5000
+$HttpTotal = 0
+$HttpOk = 0
+$HttpFail = 0
+$WarningCount = 0
+
+# TLS 1.2 is required by modern cloud services. Numeric value 3072 keeps this
+# script parseable on old .NET versions where the Tls12 enum name is absent.
+try {
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Enum]::ToObject(
+        [System.Net.SecurityProtocolType],
+        3072
+    )
+} catch {
+}
+
+# Certificate trust is intentionally not part of this reachability diagnostic.
+try {
+    [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+} catch {
+}
+
+function New-Resource {
+    param(
+        [string]$Id,
+        [string]$Label,
+        [string]$Url,
+        [string]$ExpectedIp
+    )
+
+    $resource = New-Object PSObject
+    $resource | Add-Member NoteProperty Id $Id
+    $resource | Add-Member NoteProperty Label $Label
+    $resource | Add-Member NoteProperty Url $Url
+    $resource | Add-Member NoteProperty ExpectedIp $ExpectedIp
+    return $resource
+}
+
+function Add-CommonBus77Resources {
+    param(
+        [string]$ProductHost,
+        [string]$ProductLabel,
+        [string]$IpHubHost,
+        [string]$IpHubLabel,
+        [string]$IpHubIp
+    )
+
+    $items = @()
+    $items += New-Resource "www" "Website and downloads" "https://www.iridi.com/" "89.169.183.139"
+    $items += New-Resource "auth-ru" "Authorization RU" "https://auth.ru.iridi.com/" "84.201.152.245"
+    $items += New-Resource "endpoint" "Cloud endpoint" "https://endpoint.iridi.com/" "95.181.182.182"
+    $items += New-Resource "bus77" $ProductLabel ("https://" + $ProductHost + "/") "84.201.152.245"
+    $items += New-Resource "iphub" $IpHubLabel ("https://" + $IpHubHost + "/") $IpHubIp
+    $items += New-Resource "commercial" "Commercial offers API" "https://api.commercial-offer.iridi.com/" "213.219.212.191"
+    return $items
+}
+
+$Resources = @()
+$GateHosts = @()
+$ProductLabel = ""
+
+switch ($Product) {
+    "i3knx" {
+        $ProductLabel = "i3 KNX"
+        $GateHosts = @("37.27.5.98", "85.192.35.27")
+        $Resources += New-Resource "www" "Website and downloads" "https://www.iridi.com/" "89.169.183.139"
+        $Resources += New-Resource "auth-eu" "Authorization EU" "https://auth.eu.iridi.com/" "84.201.152.245"
+        $Resources += New-Resource "proxy-auth-eu" "Authorization proxy EU" "https://proxy.auth.eu.iridi.com/" "72.56.78.171"
+        $Resources += New-Resource "proxy-auth-cloud" "Authorization proxy Cloud" "https://proxy.auth.eu.iridi.cloud/" "94.131.83.102"
+        $Resources += New-Resource "i3knx-eu" "i3 KNX cloud EU" "https://i3knx.eu.iridi.com/" "95.216.162.71"
+        $Resources += New-Resource "proxy-i3knx-eu" "i3 KNX proxy EU" "https://proxy.i3knx.eu.iridi.com/" "147.45.238.146"
+        $Resources += New-Resource "proxy-knx-cloud" "KNX proxy Cloud" "https://proxy.knx.eu.iridi.cloud/" "94.131.87.121"
+        $Resources += New-Resource "proxy-s3-eu" "Storage proxy EU" "https://proxy.s3.eu.iridi.com/" "72.56.68.146"
+        $Resources += New-Resource "ping" "Control endpoint" "https://ping.iridiummobile.net/" "52.222.136.36"
+        $Resources += New-Resource "s3-eu" "Project storage EU" "https://s3.eu.iridi.com/" "95.217.164.135"
+    }
+    "bus77-home" {
+        $ProductLabel = "Bus77 Home"
+        $GateHosts = @("37.27.5.98", "85.192.35.27")
+        $Resources = Add-CommonBus77Resources `
+            "bus77home.ru.iridi.com" `
+            "Bus77 Home cloud" `
+            "iphubhome.ru.iridi.com" `
+            "IP-Hub Home cloud" `
+            "37.139.42.137"
+    }
+    "bus77-lite" {
+        $ProductLabel = "Bus77 Lite"
+        $GateHosts = @("37.27.5.98", "85.192.35.27")
+        $Resources = Add-CommonBus77Resources `
+            "bus77lite.ru.iridi.com" `
+            "Bus77 Lite cloud" `
+            "iphub.ru.iridi.com" `
+            "IP-Hub Lite cloud" `
+            "51.250.30.171"
+    }
+    "iridi-pro" {
+        $Region = $Region.ToUpperInvariant()
+        $ProductLabel = "iRidi Pro " + $Region
+        if ($Region -eq "EU") {
+            $GateHosts = @("37.27.5.98")
+            $Resources += New-Resource "auth-eu" "Authorization EU" "https://auth.eu.iridi.com/" "95.216.162.71"
+            $Resources += New-Resource "i3pro-eu" "i3 Pro cloud EU" "https://i3pro.eu.iridi.com/" "95.216.162.71"
+            $Resources += New-Resource "storage-eu" "AWS storage EU" "https://s3.us-east-1.amazonaws.com/" "dynamic"
+            $Resources += New-Resource "projects-eu" "i3 Pro projects EU" "https://iridium-cloud-files.s3.amazonaws.com/" "dynamic"
+            $Resources += New-Resource "updates-site" "Update website" "http://iridi.com/" "89.169.183.139"
+            $Resources += New-Resource "updates-s3" "Update files" "http://iridium3download.s3.amazonaws.com/" "dynamic"
+        } else {
+            $GateHosts = @("85.192.35.27")
+            $Resources += New-Resource "auth-ru" "Authorization RU" "https://auth.ru.iridi.com/" "84.201.152.245"
+            $Resources += New-Resource "i3pro-ru" "i3 Pro cloud RU" "https://i3pro.ru.iridi.com/" "84.201.152.245"
+            $Resources += New-Resource "storage-ru" "Yandex storage RU" "https://storage.yandexcloud.net/" "213.180.193.243"
+            $Resources += New-Resource "projects-ru" "i3 Pro projects RU" "https://i3pro.storage.yandexcloud.net/" "213.180.193.243"
+            $Resources += New-Resource "updates-site" "Update website" "http://iridi.com/" "89.169.183.139"
+            $Resources += New-Resource "updates-s3" "Update files" "http://iridium3download.s3.amazonaws.com/" "dynamic"
+        }
+    }
+}
+
+function Write-Separator {
+    Write-Host "----------------------------------------------------------------"
+}
+
+function Test-HttpResource {
+    param($Resource)
+
+    $uri = New-Object System.Uri($Resource.Url)
+    $resolvedAddresses = @()
+    try {
+        $hostAddresses = [System.Net.Dns]::GetHostAddresses($uri.Host)
+        foreach ($address in $hostAddresses) {
+            $resolvedAddresses += $address.IPAddressToString
+        }
+    } catch {
+    }
+
+    if ($resolvedAddresses.Count -gt 0) {
+        $dnsText = [System.String]::Join(", ", [string[]]$resolvedAddresses)
+    } else {
+        $dnsText = "not resolved"
+    }
+
+    $attempt = 1
+    $response = $null
+    $statusCode = 0
+    $contentType = "not provided"
+    $payloadBytes = 0
+    $lastError = ""
+    $elapsedSeconds = 0
+
+    while ($attempt -le $MaxAttempts) {
+        $response = $null
+        $lastError = ""
+        $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+        try {
+            $request = [System.Net.HttpWebRequest]::Create($Resource.Url)
+            $request.Method = "GET"
+            $request.UserAgent = "iridi-cloud-check-windows/1.0"
+            $request.Accept = "application/json, text/plain, */*"
+            $request.AllowAutoRedirect = $true
+            $request.MaximumAutomaticRedirections = 3
+            $request.Timeout = $RequestTimeoutMilliseconds
+            $request.ReadWriteTimeout = $RequestTimeoutMilliseconds
+            $response = $request.GetResponse()
+        } catch [System.Net.WebException] {
+            if ($_.Exception.Response -ne $null) {
+                $response = $_.Exception.Response
+            } else {
+                $lastError = $_.Exception.Message
+            }
+        } catch {
+            $lastError = $_.Exception.Message
+        }
+        $stopwatch.Stop()
+        $elapsedSeconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+
+        if ($response -ne $null) {
+            break
+        }
+        if ($attempt -ge $MaxAttempts) {
+            break
+        }
+        Start-Sleep -Seconds $RetryDelaySeconds
+        $attempt = $attempt + 1
+    }
+
+    if ($response -ne $null) {
+        try {
+            $statusCode = [int]$response.StatusCode
+            if ($response.ContentType) {
+                $contentType = [string]$response.ContentType
+            }
+            $stream = $response.GetResponseStream()
+            if ($stream -ne $null) {
+                $buffer = New-Object byte[] 8192
+                do {
+                    $bytesRead = $stream.Read($buffer, 0, $buffer.Length)
+                    $payloadBytes = $payloadBytes + $bytesRead
+                } while ($bytesRead -gt 0)
+                $stream.Close()
+            }
+        } catch {
+            $lastError = $_.Exception.Message
+        }
+        try {
+            $response.Close()
+        } catch {
+        }
+    }
+
+    Write-Separator
+    Write-Host $Resource.Label
+    Write-Host ("  URL:              {0}" -f $Resource.Url)
+    Write-Host ("  DNS:              {0} -> {1}" -f $uri.Host, $dnsText)
+    Write-Host ("  Documented IP:    {0}" -f $Resource.ExpectedIp)
+    Write-Host ("  Attempt:          {0} of {1}" -f $attempt, $MaxAttempts)
+    Write-Host ("  HTTP response:    {0}" -f $statusCode)
+    Write-Host ("  Content-Type:     {0}" -f $contentType)
+    Write-Host ("  Payload:          {0} bytes" -f $payloadBytes)
+    Write-Host ("  Request time:     {0} s" -f $elapsedSeconds)
+
+    if (($Resource.ExpectedIp -ne "dynamic") -and ($resolvedAddresses.Count -gt 0)) {
+        if (-not ($resolvedAddresses -contains $Resource.ExpectedIp)) {
+            Write-Host "  [WARN] DNS addresses differ from the documented IP (CDN or proxy may be in use)."
+            $script:WarningCount = $script:WarningCount + 1
+        }
+    }
+
+    if (($statusCode -ge 200) -and ($statusCode -lt 500)) {
+        if ($attempt -gt 1) {
+            Write-Host "  [WARN] The response was received after a retry; the connection was unstable."
+            $script:WarningCount = $script:WarningCount + 1
+        }
+        Write-Host "  [OK] Application-level HTTP response and payload received."
+        return $true
+    }
+
+    if ($statusCode -ge 500) {
+        Write-Host ("  [FAIL] The service returned HTTP {0}." -f $statusCode)
+    } else {
+        Write-Host ("  [FAIL] No HTTP response after {0} attempts." -f $attempt)
+        if ($lastError) {
+            Write-Host ("  Error: {0}" -f $lastError)
+        }
+    }
+    return $false
+}
+
+function Test-TcpPort {
+    param(
+        [string]$HostName,
+        [int]$Port
+    )
+
+    $client = New-Object System.Net.Sockets.TcpClient
+    $asyncResult = $null
+    try {
+        $asyncResult = $client.BeginConnect($HostName, $Port, $null, $null)
+        if (-not $asyncResult.AsyncWaitHandle.WaitOne($GateTimeoutMilliseconds, $false)) {
+            return $false
+        }
+        $client.EndConnect($asyncResult)
+        return $client.Connected
+    } catch {
+        return $false
+    } finally {
+        if ($asyncResult -ne $null) {
+            try {
+                $asyncResult.AsyncWaitHandle.Close()
+            } catch {
+            }
+        }
+        $client.Close()
+    }
+}
+
+Write-Host ("iRidi Cloud Check - {0}" -f $ProductLabel)
+Write-Host ("Target: Windows 10/11 / Windows PowerShell 5.1")
+Write-Host ("Started: {0}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss zzz"))
+Write-Host ("Computer: {0}" -f $env:COMPUTERNAME)
+Write-Host "Method: DNS + real HTTP(S) GET + payload read + Cloud Gate TCP connection"
+
+foreach ($resource in $Resources) {
+    $HttpTotal = $HttpTotal + 1
+    if (Test-HttpResource $resource) {
+        $HttpOk = $HttpOk + 1
+    } else {
+        $HttpFail = $HttpFail + 1
+    }
+}
+
+Write-Separator
+Write-Host "Cloud Gate TCP connectivity"
+$GateTotal = 0
+$GateOk = 0
+foreach ($gateHost in $GateHosts) {
+    foreach ($gatePort in @(9088, 9089)) {
+        $GateTotal = $GateTotal + 1
+        if (Test-TcpPort $gateHost $gatePort) {
+            Write-Host ("  [OK] {0}:{1} accepts TCP connections." -f $gateHost, $gatePort)
+            $GateOk = $GateOk + 1
+        } else {
+            Write-Host ("  [WARN] {0}:{1} did not accept a TCP connection." -f $gateHost, $gatePort)
+            $WarningCount = $WarningCount + 1
+        }
+    }
+}
+
+$GateFailed = $false
+if ($GateOk -eq 0) {
+    $GateFailed = $true
+    Write-Host "  [FAIL] No documented Cloud Gate endpoint accepted a TCP connection."
+} else {
+    Write-Host ("  [OK] Cloud Gate is reachable through {0} of {1} tested endpoints." -f $GateOk, $GateTotal)
+}
+
+Write-Separator
+Write-Host ("SUMMARY {0}: HTTP checked {1}, available {2}, failed {3}, warnings {4}" -f $ProductLabel, $HttpTotal, $HttpOk, $HttpFail, $WarningCount)
+if (($HttpFail -eq 0) -and (-not $GateFailed)) {
+    Write-Host "RESULT: PASS - required HTTP resources and Cloud Gate are reachable."
+    exit 0
+}
+
+Write-Host "RESULT: FAIL - one or more required cloud checks failed."
+exit 1
+
+
+

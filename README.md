@@ -1,8 +1,9 @@
 # iRidi Diagnostics Scripts
 
-Автономные `sh`-скрипты для быстрой диагностики серверов iRidi во время
-удалённого подключения. Файлы не требуют установки Python и работают с POSIX
-`sh`, включая BusyBox на HS Server.
+Автономные `sh`- и PowerShell-скрипты для быстрой диагностики серверов iRidi во
+время удалённого подключения. Файлы не требуют установки Python. Linux-версии
+работают с POSIX `sh`, включая BusyBox на HS Server; Windows-версии рассчитаны
+на штатный Windows PowerShell.
 
 ## Скрипты
 
@@ -14,6 +15,8 @@
 | `check_iridi_pro_ru.sh` | Проверка iRidi Pro Cloud для региона RU |
 | `check_iridi_pro_eu.sh` | Проверка iRidi Pro Cloud для региона EU |
 | `check_emmc_health.sh` | Состояние eMMC, ошибки ядра и безопасная проверка записи в корневой раздел |
+| `check_iridi_cloud_windows_10_11.ps1` | Универсальная проверка облака с Windows 10/11 и PowerShell 5.1 |
+| `check_iridi_cloud_windows_7.ps1` | Универсальная проверка облака с Windows 7 и PowerShell 2.0+ |
 
 Облачные проверки выполняют DNS-разрешение и реальный HTTP(S) GET, показывают
 фактический IP, HTTP-статус, тип и размер полезной нагрузки. При сетевой ошибке
@@ -45,6 +48,48 @@ sh check_i3knx.sh
 sh check_bus77_lite.sh
 sh check_iridi_pro_ru.sh
 sh check_iridi_pro_eu.sh
+```
+
+## Windows 10 и Windows 11
+
+Скачайте универсальный файл в PowerShell:
+
+```powershell
+Set-Location $env:TEMP
+curl.exe -fL "https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/check_iridi_cloud_windows_10_11.ps1" -o "check_iridi_cloud_windows_10_11.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\check_iridi_cloud_windows_10_11.ps1 -Product bus77-home
+```
+
+Доступные значения `-Product`:
+
+```powershell
+-Product i3knx
+-Product bus77-home
+-Product bus77-lite
+-Product iridi-pro -Region RU
+-Product iridi-pro -Region EU
+```
+
+## Windows 7
+
+Скачайте файл через браузер или из `cmd.exe` штатной утилитой Windows:
+
+```bat
+certutil.exe -urlcache -split -f "https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/check_iridi_cloud_windows_7.ps1" "%TEMP%\check_iridi_cloud_windows_7.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%TEMP%\check_iridi_cloud_windows_7.ps1" -Product bus77-home
+```
+
+Windows 7-версия совместима с синтаксисом PowerShell 2.0 и выполняет HTTPS GET
+через встроенный WinHTTP с явным включением TLS 1.2. Если Windows 7 давно не
+обновлялась и системный SChannel не поддерживает TLS 1.2, скрипт выведет
+понятную ошибку соединения — это будет проблемой ОС, а не облачного ресурса.
+
+Обе Windows-версии выполняют реальный HTTP(S) GET с чтением полезной нагрузки и
+пытаются установить TCP-соединение с Cloud Gate на портах 9088/9089. Результат
+можно сохранить стандартным `Tee-Object`:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\check_iridi_cloud_windows_10_11.ps1 -Product i3knx 2>&1 | Tee-Object -FilePath .\iridi-cloud-report.txt
 ```
 
 ## Диагностика eMMC
