@@ -3,8 +3,53 @@
 # Standalone Bus77 Home cloud diagnostic.
 # Usage: sh check_bus77_home.sh
 
+# Live output and automatic per-run log for POSIX sh and BusyBox.
+if [ "${IRIDI_CLOUD_LOG_ACTIVE:-0}" != "1" ]; then
+  CURRENT_DIRECTORY="$(pwd 2>/dev/null || printf '.')"
+  LOG_DIRECTORY="${IRIDI_DIAG_LOG_DIR:-$CURRENT_DIRECTORY}"
+  if [ ! -d "$LOG_DIRECTORY" ] || [ ! -w "$LOG_DIRECTORY" ]; then
+    LOG_DIRECTORY="${TMPDIR:-/tmp}"
+  fi
+  SCRIPT_BASENAME="${0##*/}"
+  TOOL_SLUG="${SCRIPT_BASENAME%.sh}"
+  TOOL_SLUG="${TOOL_SLUG#check_}"
+  TOOL_SLUG="$(printf '%s' "$TOOL_SLUG" | tr -c 'A-Za-z0-9._-' '_')"
+  HOST_LABEL="$(hostname 2>/dev/null || printf server)"
+  HOST_LABEL="$(printf '%s' "$HOST_LABEL" | tr -c 'A-Za-z0-9._-' '_')"
+  LOG_TIMESTAMP="$(date '+%Y%m%d_%H%M%S' 2>/dev/null || printf unknown_time)"
+  LOG_FILE="$LOG_DIRECTORY/cloud_${TOOL_SLUG}_${HOST_LABEL}_${LOG_TIMESTAMP}_$$.log"
+  export IRIDI_CLOUD_LOG_ACTIVE=1
+  export IRIDI_CLOUD_LOG_FILE="$LOG_FILE"
+
+  if command -v tee >/dev/null 2>&1; then
+    sh "$0" "$@" 2>&1 | tee "$LOG_FILE"
+    TEE_RC=$?
+    RESULT_LINE="$(grep '^РЕЗУЛЬТАТ:' "$LOG_FILE" 2>/dev/null | tail -n 1)"
+    case "$RESULT_LINE" in
+      *PASS*) FINAL_RC=0 ;;
+      *WARN*) FINAL_RC=1 ;;
+      *FAIL*) FINAL_RC=2 ;;
+      *) FINAL_RC=2 ;;
+    esac
+    if [ "$TEE_RC" -ne 0 ]; then
+      FINAL_RC=2
+      printf '[FAIL] Не удалось полностью записать лог-файл.\n'
+    fi
+    printf '\nЛог сохранён: %s\n' "$LOG_FILE" | tee -a "$LOG_FILE"
+    exit "$FINAL_RC"
+  fi
+
+  sh "$0" "$@" >"$LOG_FILE" 2>&1
+  FINAL_RC=$?
+  cat "$LOG_FILE"
+  printf '\nЛог сохранён: %s\n' "$LOG_FILE"
+  exit "$FINAL_RC"
+fi
+
 set +e
 export LC_ALL=C
+
+TOOL_VERSION=1.2
 
 REGION="Bus77 Home"
 GATE_HOSTS="37.27.5.98 85.192.35.27"
@@ -15,6 +60,7 @@ TOTAL=0
 OK_COUNT=0
 FAIL_COUNT=0
 WARN_COUNT=0
+GATE_STATUS="не проверен"
 
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/bus77-home.XXXXXX" 2>/dev/null)"
 if [ -z "$WORK_DIR" ] || [ ! -d "$WORK_DIR" ]; then
@@ -178,16 +224,20 @@ check_gate() {
   separator
   printf 'Cloud Gate: %s, порты 9088/9089\n' "$GATE_HOSTS"
   if [ -n "$GATE_LINE" ]; then
+    GATE_STATUS="активное соединение найдено"
     printf '  [OK] Активное соединение найдено.\n'
     printf '  %s\n' "$GATE_LINE"
   else
+    GATE_STATUS="активное соединение не найдено"
     printf '  [WARN] Активное соединение не найдено. Это не отменяет результаты HTTP-проверки.\n'
     WARN_COUNT=$((WARN_COUNT + 1))
   fi
 }
 
 printf 'iRidi Cloud Check — %s\n' "$REGION"
+printf 'Версия инструмента: %s\n' "$TOOL_VERSION"
 printf 'Время запуска: %s\n' "$(date 2>/dev/null || echo unknown)"
+printf 'Лог-файл: %s\n' "${IRIDI_CLOUD_LOG_FILE:-не задан}"
 printf 'Устройство: %s | %s | %s\n' "$(hostname 2>/dev/null || echo unknown)" "$(uname -s 2>/dev/null)" "$(uname -m 2>/dev/null)"
 printf 'Метод: DNS + реальный HTTP(S) GET + анализ ответа и полезной нагрузки\n'
 
@@ -200,10 +250,28 @@ probe_resource commercial "Коммерческие предложения" "htt
 check_gate
 
 separator
-printf 'ИТОГ %s: проверено %s, доступно %s, ошибок %s, предупреждений %s\n' "$REGION" "$TOTAL" "$OK_COUNT" "$FAIL_COUNT" "$WARN_COUNT"
-if [ "$FAIL_COUNT" -eq 0 ]; then
-  printf 'РЕЗУЛЬТАТ: PASS — обязательные облачные HTTP-ресурсы доступны.\n'
-  exit 0
+printf 'КРАТКИЙ ИТОГ\n'
+printf '  Профиль: %s\n' "$REGION"
+printf '  HTTP-ресурсы: доступно %s из %s, ошибок %s\n' "$OK_COUNT" "$TOTAL" "$FAIL_COUNT"
+printf '  Cloud Gate: %s\n' "$GATE_STATUS"
+printf '  Предупреждения: %s\n' "$WARN_COUNT"
+if [ "$FAIL_COUNT" -gt 0 ]; then
+  printf '  Вывод: часть обязательных облачных ресурсов недоступна.\n'
+elif [ "$WARN_COUNT" -gt 0 ]; then
+  printf '  Вывод: обязательные HTTP-ресурсы доступны, но есть предупреждения.\n'
+else
+  printf '  Вывод: обязательные облачные ресурсы доступны без предупреждений.\n'
 fi
-printf 'РЕЗУЛЬТАТ: FAIL — часть обязательных облачных HTTP-ресурсов недоступна.\n'
-exit 1
+
+separator
+printf 'ИТОГ %s: проверено %s, доступно %s, ошибок %s, предупреждений %s\n' "$REGION" "$TOTAL" "$OK_COUNT" "$FAIL_COUNT" "$WARN_COUNT"
+if [ "$FAIL_COUNT" -gt 0 ]; then
+  printf 'РЕЗУЛЬТАТ: FAIL — часть обязательных облачных HTTP-ресурсов недоступна.\n'
+  exit 2
+fi
+if [ "$WARN_COUNT" -gt 0 ]; then
+  printf 'РЕЗУЛЬТАТ: WARN — HTTP-ресурсы доступны, но обнаружены предупреждения.\n'
+  exit 1
+fi
+printf 'РЕЗУЛЬТАТ: PASS — обязательные облачные ресурсы доступны.\n'
+exit 0

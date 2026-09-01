@@ -1,8 +1,8 @@
 # iRidi Diagnostics Scripts
 
-Автономные `sh`- и PowerShell-скрипты для быстрой диагностики серверов iRidi. Linux-версии
-работают с POSIX `sh`, включая BusyBox на HS Server; Windows-версии рассчитаны
-на штатный Windows PowerShell.
+Набор автономных инструментов для диагностики серверов и облачных ресурсов
+iRidi. Linux-версии работают с POSIX `sh`, включая BusyBox на HS Server;
+Windows-версии рассчитаны на штатный Windows PowerShell.
 
 ## Структура архива
 
@@ -26,12 +26,16 @@
 | `check_bus77_lite.sh` | Прикладная проверка облачных ресурсов Bus77 Lite |
 | `check_iridi_pro_ru.sh` | Проверка iRidi Pro Cloud для региона RU |
 | `check_iridi_pro_eu.sh` | Проверка iRidi Pro Cloud для региона EU |
-| `check_emmc_health.sh` | Состояние eMMC, проверка записи и автоматический лог для отправки инженеру |
+| `check_emmc_health.sh` | Состояние eMMC, проверка записи, overlay и автоматический лог |
 
 Облачные проверки выполняют DNS-разрешение и реальный HTTP(S) GET, показывают
 фактический IP, HTTP-статус, тип и размер полезной нагрузки. При сетевой ошибке
 без HTTP-ответа запрос повторяется до трёх раз. Ответы закрытых хранилищ `403`
-считаются подтверждением доступности ресурса.
+считаются подтверждением доступности ресурса. Ход проверки одновременно
+отображается в терминале и сохраняется в отдельный лог. В конце выводится
+краткое резюме и статус `PASS`, `WARN` или `FAIL`.
+Имя файла содержит профиль, имя сервера и время запуска, например
+`cloud_bus77_home_SERVER_20260901_153000_1234.log`.
 
 ## Быстрый запуск
 
@@ -39,8 +43,8 @@
 
 ```sh
 cd /tmp
-wget https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/linux/check_bus77_home.sh --no-check-certificate
-sh check_bus77_home.sh 2>&1 | tee check_bus77_home.txt
+wget --no-check-certificate https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/linux/check_bus77_home.sh
+sh check_bus77_home.sh
 ```
 
 Для остальных продуктов:
@@ -52,7 +56,7 @@ sh check_iridi_pro_ru.sh
 sh check_iridi_pro_eu.sh
 ```
 
-## Простой запуск в Windows
+## Запуск в Windows
 
 1. Скачайте [ZIP-архив репозитория](https://github.com/efDaCartoonz/irididiag/archive/refs/heads/main.zip).
 2. Полностью распакуйте архив.
@@ -67,7 +71,7 @@ sh check_iridi_pro_eu.sh
 `iridi_pro_eu_20260901_143000.log`. Лаунчер сам определяет версию PowerShell и
 выбирает совместимый сценарий для Windows 7 или Windows 10/11.
 
-## Windows 10 и Windows 11: запуск для инженера
+## Windows 10 и Windows 11: запуск с параметрами
 
 Скачайте универсальный файл в PowerShell:
 
@@ -87,7 +91,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\check_iridi_cloud_wind
 -Product iridi-pro -Region EU
 ```
 
-## Windows 7: запуск для инженера
+## Windows 7: запуск с параметрами
 
 Скачайте файл через браузер или из `cmd.exe` штатной утилитой Windows:
 
@@ -102,37 +106,29 @@ Windows 7-версия совместима с синтаксисом PowerShell
 понятную ошибку соединения — это будет проблемой ОС, а не облачного ресурса.
 
 Обе Windows-версии выполняют реальный HTTP(S) GET с чтением полезной нагрузки и
-пытаются установить TCP-соединение с Cloud Gate на портах 9088/9089. При любом
-запуске результат автоматически сохраняется в подкаталог `logs` рядом со
-скриптом. При необходимости инженер также может создать вторую копию через
-`Tee-Object`:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\check_iridi_cloud_windows_10_11.ps1 -Product i3knx 2>&1 | Tee-Object -FilePath .\iridi-cloud-report.txt
-```
+пытаются установить TCP-соединение с Cloud Gate на портах 9088/9089. Результат
+автоматически сохраняется в подкаталог `logs` рядом со скриптом.
 
 ## Диагностика eMMC
 
-Пользователю достаточно перейти в каталог со скриптом и запустить его от
-`root`:
+Полная проверка запускается от `root`:
 
 ```sh
 sh check_emmc_health.sh
 ```
 
-Если сервер имеет доступ к GitHub, скачать и запустить актуальную версию можно
-тремя командами:
+Загрузка и запуск актуальной версии:
 
 ```sh
 cd /tmp
-wget https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/linux/check_emmc_health.sh --no-check-certificate
+wget --no-check-certificate https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/linux/check_emmc_health.sh
 sh check_emmc_health.sh
 ```
 
 Ход проверки виден в терминале. Одновременно в текущем каталоге автоматически
 создаётся отдельный файл вида
-`emmc_diagnostic_ИМЯ-СЕРВЕРА_ГГГГММДД_ЧЧММСС_PID.log`. После завершения
-пользователю достаточно передать этот файл инженеру.
+`emmc_diagnostic_ИМЯ-СЕРВЕРА_ГГГГММДД_ЧЧММСС_PID.log`, пригодный для последующего
+анализа.
 
 Скрипт определяет eMMC и флаг read-only, ищет ошибки накопителя в журнале ядра,
 записывает 1 МиБ непосредственно в `/`, выполняет `sync`, дважды читает файл и
@@ -156,7 +152,8 @@ sh check_emmc_health.sh --no-write
 
 ## Коды завершения
 
-- облачные проверки: `0` — обязательные HTTP-ресурсы доступны, `1` — есть
+- Linux-проверки облака: `0` — `PASS`, `1` — `WARN`, `2` — `FAIL`;
+- Windows-проверки облака: `0` — обязательные ресурсы доступны, `1` — есть
   недоступные ресурсы;
 - проверка eMMC: `0` — `PASS`, `1` — `WARN`, `2` — `FAIL`.
 
