@@ -5,12 +5,69 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet("i3knx", "bus77-home", "bus77-lite", "iridi-pro")]
-    [string]$Product = "i3knx",
+    [string]$Product = "",
 
     [ValidateSet("RU", "EU")]
     [string]$Region = "RU"
 )
+
+if (-not $Product) {
+    while (-not $Product) {
+        Clear-Host
+        Write-Host "iRidi Cloud Diagnostics"
+        Write-Host "======================="
+        Write-Host "1. i3 KNX"
+        Write-Host "2. Bus77 Home"
+        Write-Host "3. Bus77 Lite"
+        Write-Host "4. iRidi Pro - RU region"
+        Write-Host "5. iRidi Pro - EU region"
+        Write-Host "0. Exit"
+        Write-Host ""
+        $selection = Read-Host "Select product (0-5)"
+        switch ($selection) {
+            "1" { $Product = "i3knx" }
+            "2" { $Product = "bus77-home" }
+            "3" { $Product = "bus77-lite" }
+            "4" { $Product = "iridi-pro"; $Region = "RU" }
+            "5" { $Product = "iridi-pro"; $Region = "EU" }
+            "0" { exit 0 }
+            default {
+                Write-Host "Invalid selection. Press Enter and try again."
+                [void](Read-Host)
+            }
+        }
+    }
+}
+
+$Product = $Product.ToLowerInvariant()
+$SupportedProducts = @("i3knx", "bus77-home", "bus77-lite", "iridi-pro")
+if (-not ($SupportedProducts -contains $Product)) {
+    Write-Host ("[ERROR] Unknown product: {0}" -f $Product)
+    Write-Host "Allowed values: i3knx, bus77-home, bus77-lite, iridi-pro"
+    exit 2
+}
+
+$Region = $Region.ToUpperInvariant()
+$ScriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
+if (-not $ScriptDirectory) {
+    $ScriptDirectory = (Get-Location).Path
+}
+$LogDirectory = Join-Path $ScriptDirectory "logs"
+if (-not (Test-Path -LiteralPath $LogDirectory)) {
+    [void](New-Item -ItemType Directory -Path $LogDirectory)
+}
+$LogProduct = $Product.Replace("-", "_")
+if ($Product -eq "iridi-pro") {
+    $LogProduct = $LogProduct + "_" + $Region.ToLowerInvariant()
+}
+$LogPath = Join-Path $LogDirectory ($LogProduct + "_" + (Get-Date -Format "yyyyMMdd_HHmmss") + ".log")
+$TranscriptStarted = $false
+try {
+    Start-Transcript -Path $LogPath | Out-Null
+    $TranscriptStarted = $true
+} catch {
+    Write-Host ("[WARN] Could not start the log file: {0}" -f $_.Exception.Message)
+}
 
 if ($PSVersionTable.PSVersion.Major -lt 5) {
     Write-Host "[WARN] Windows PowerShell 5.1 is recommended for this script."
@@ -301,6 +358,7 @@ Write-Host ("iRidi Cloud Check - {0}" -f $ProductLabel)
 Write-Host ("Target: Windows 10/11 / Windows PowerShell 5.1")
 Write-Host ("Started: {0}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss zzz"))
 Write-Host ("Computer: {0}" -f $env:COMPUTERNAME)
+Write-Host ("Log file: {0}" -f $LogPath)
 Write-Host "Method: DNS + real HTTP(S) GET + payload read + Cloud Gate TCP connection"
 
 foreach ($resource in $Resources) {
@@ -341,11 +399,14 @@ Write-Separator
 Write-Host ("SUMMARY {0}: HTTP checked {1}, available {2}, failed {3}, warnings {4}" -f $ProductLabel, $HttpTotal, $HttpOk, $HttpFail, $WarningCount)
 if (($HttpFail -eq 0) -and (-not $GateFailed)) {
     Write-Host "RESULT: PASS - required HTTP resources and Cloud Gate are reachable."
-    exit 0
+    $ExitCode = 0
+} else {
+    Write-Host "RESULT: FAIL - one or more required cloud checks failed."
+    $ExitCode = 1
 }
 
-Write-Host "RESULT: FAIL - one or more required cloud checks failed."
-exit 1
-
-
-
+Write-Host ("Log saved: {0}" -f $LogPath)
+if ($TranscriptStarted) {
+    Stop-Transcript | Out-Null
+}
+exit $ExitCode
