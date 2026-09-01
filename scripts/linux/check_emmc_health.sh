@@ -3,12 +3,56 @@
 # Безопасная диагностика eMMC на iRidi HS/ProAV/UMC и Linux-серверах.
 # По умолчанию выполняет контролируемую запись 1 МиБ в корень, sync,
 # повторное чтение с контрольной суммой и удаление временного файла.
+# Вывод одновременно показывается на экране и сохраняется в отдельный лог.
 #
 # Запуск:       sh check_emmc_health.sh
 # Без записи:   sh check_emmc_health.sh --no-write
 
+# Portable logging wrapper. The diagnostic body runs as a child so BusyBox tee
+# can show live output and save it without requiring Bash process substitution.
+if [ "${IRIDI_EMMC_LOG_ACTIVE:-0}" != "1" ]; then
+  CURRENT_DIRECTORY="$(pwd 2>/dev/null || printf '.')"
+  LOG_DIRECTORY="${IRIDI_DIAG_LOG_DIR:-$CURRENT_DIRECTORY}"
+  if [ ! -d "$LOG_DIRECTORY" ] || [ ! -w "$LOG_DIRECTORY" ]; then
+    LOG_DIRECTORY="${TMPDIR:-/tmp}"
+  fi
+  HOST_LABEL="$(hostname 2>/dev/null || printf server)"
+  HOST_LABEL="$(printf '%s' "$HOST_LABEL" | tr -c 'A-Za-z0-9._-' '_')"
+  [ -n "$HOST_LABEL" ] || HOST_LABEL=server
+  LOG_TIMESTAMP="$(date '+%Y%m%d_%H%M%S' 2>/dev/null || printf unknown_time)"
+  LOG_FILE="$LOG_DIRECTORY/emmc_diagnostic_${HOST_LABEL}_${LOG_TIMESTAMP}_$$.log"
+  export IRIDI_EMMC_LOG_ACTIVE=1
+  export IRIDI_EMMC_LOG_FILE="$LOG_FILE"
+
+  if command -v tee >/dev/null 2>&1; then
+    sh "$0" "$@" 2>&1 | tee "$LOG_FILE"
+    TEE_RC=$?
+    RESULT_LINE="$(grep '^РЕЗУЛЬТАТ:' "$LOG_FILE" 2>/dev/null | tail -n 1)"
+    case "$RESULT_LINE" in
+      *PASS*) FINAL_RC=0 ;;
+      *WARN*) FINAL_RC=1 ;;
+      *FAIL*) FINAL_RC=2 ;;
+      *) FINAL_RC=2 ;;
+    esac
+    if [ "$TEE_RC" -ne 0 ]; then
+      FINAL_RC=2
+      printf '[FAIL] Не удалось полностью записать лог-файл.\n'
+    fi
+    printf '\nЛог сохранён: %s\n' "$LOG_FILE" | tee -a "$LOG_FILE"
+    exit "$FINAL_RC"
+  fi
+
+  sh "$0" "$@" >"$LOG_FILE" 2>&1
+  FINAL_RC=$?
+  cat "$LOG_FILE"
+  printf '\nЛог сохранён: %s\n' "$LOG_FILE"
+  exit "$FINAL_RC"
+fi
+
 set +e
 export LC_ALL=C
+
+SCRIPT_VERSION=1.1
 
 WRITE_TEST=yes
 [ "${1:-}" = "--no-write" ] && WRITE_TEST=no
@@ -17,6 +61,11 @@ WARNINGS=0
 FAILURES=0
 TEST_FILE=""
 TEST_ERROR=""
+EMMC_STATUS="не обнаружена"
+BLOCK_STATUS="не определён"
+WEAR_STATUS="недоступны"
+KERNEL_STATUS="не проверен"
+ROOT_WRITE_STATUS="не выполнена"
 
 cleanup() {
   [ -n "$TEST_FILE" ] && rm -f "$TEST_FILE"
@@ -101,8 +150,10 @@ checksum_file() {
 }
 
 printf 'Диагностика eMMC / корневого накопителя\n'
+printf 'Версия скрипта: %s\n' "$SCRIPT_VERSION"
 printf 'Время: %s\n' "$(date 2>/dev/null || echo unknown)"
 printf 'Устройство: %s\n' "$(hostname 2>/dev/null || echo unknown)"
+printf 'Лог-файл: %s\n' "${IRIDI_EMMC_LOG_FILE:-не задан}"
 printf 'Модель платформы: %s\n' "$(tr -d '\000' </proc/device-tree/model 2>/dev/null || echo unknown)"
 printf 'Ядро: %s\n' "$(uname -a 2>/dev/null)"
 printf 'Режим проверки записи: %s\n' "$WRITE_TEST"
@@ -132,6 +183,7 @@ fi
 if [ -z "$MMC_DEVICE" ]; then
   fail "eMMC не обнаружена в /sys/bus/mmc/devices."
 else
+  EMMC_STATUS="обнаружена"
   MMC_NAME="$(read_field "$MMC_DEVICE/name")"
   MMC_MANFID="$(read_field "$MMC_DEVICE/manfid")"
   MMC_DATE="$(read_field "$MMC_DEVICE/date")"
@@ -140,6 +192,9 @@ else
   MMC_LIFE_A="$(printf '%s' "$MMC_LIFE" | awk '{print $1}')"
   MMC_LIFE_B="$(printf '%s' "$MMC_LIFE" | awk '{print $2}')"
   MMC_PRE_EOL="$(read_field "$MMC_DEVICE/pre_eol_info")"
+  if [ -n "$MMC_LIFE_A" ] || [ -n "$MMC_LIFE_B" ] || [ -n "$MMC_PRE_EOL" ]; then
+    WEAR_STATUS="частично доступны через sysfs"
+  fi
   printf '  Sysfs-устройство: %s\n' "${MMC_DEVICE##*/}"
   printf '  Блочное устройство: %s\n' "${MMC_NODE:-не определено}"
   printf '  Модель eMMC: %s\n' "${MMC_NAME:-не определена}"
@@ -169,8 +224,8 @@ if [ -n "$MMC_BLOCK" ]; then
   BLOCK_RO="$(read_field "$MMC_BLOCK/ro")"
   printf '  Флаг read-only основного блока: %s\n' "${BLOCK_RO:-не определён}"
   case "$BLOCK_RO" in
-    0) ok "Основной пользовательский блок eMMC доступен для записи на уровне ядра." ;;
-    1) fail "Основной пользовательский блок eMMC отмечен ядром как read-only." ;;
+    0) BLOCK_STATUS="доступен для записи"; ok "Основной пользовательский блок eMMC доступен для записи на уровне ядра." ;;
+    1) BLOCK_STATUS="read-only"; fail "Основной пользовательский блок eMMC отмечен ядром как read-only." ;;
     *) warn "Не удалось прочитать флаг read-only основного блока." ;;
   esac
 fi
@@ -183,6 +238,9 @@ if command -v mmc >/dev/null 2>&1 && [ -b "$MMC_NODE" ]; then
   EXT_LIFE_A="$(printf '%s\n' "$EXT_CSD" | awk -F': ' '/EXT_CSD_DEVICE_LIFE_TIME_EST_TYP_A/{print $2; exit}')"
   EXT_LIFE_B="$(printf '%s\n' "$EXT_CSD" | awk -F': ' '/EXT_CSD_DEVICE_LIFE_TIME_EST_TYP_B/{print $2; exit}')"
   EXT_PRE_EOL="$(printf '%s\n' "$EXT_CSD" | awk -F': ' '/EXT_CSD_PRE_EOL_INFO/{print $2; exit}')"
+  if [ -n "$EXT_LIFE_A" ] || [ -n "$EXT_LIFE_B" ] || [ -n "$EXT_PRE_EOL" ]; then
+    WEAR_STATUS="доступны через EXT_CSD"
+  fi
   printf '  EXT_CSD USER_WP: %s\n' "${USER_WP:-не определён}"
   printf '  EXT_CSD LIFE_TIME A/B: %s / %s\n' "${EXT_LIFE_A:-не определён}" "${EXT_LIFE_B:-не определён}"
   printf '  EXT_CSD PRE_EOL: %s\n' "${EXT_PRE_EOL:-не определён}"
@@ -217,22 +275,27 @@ KERNEL_ERRORS="$(dmesg 2>/dev/null | grep -Ei "$KERNEL_PATTERN")"
 KERNEL_ERROR_COUNT="$(printf '%s\n' "$KERNEL_ERRORS" | sed '/^$/d' | wc -l | tr -d ' ')"
 printf '  Найдено критических строк: %s\n' "${KERNEL_ERROR_COUNT:-0}"
 if [ "${KERNEL_ERROR_COUNT:-0}" -gt 0 ] 2>/dev/null; then
+  KERNEL_STATUS="найдены ошибки"
   printf '%s\n' "$KERNEL_ERRORS" | tail -n 60 | sed 's/^/  /'
   fail "В журнале ядра есть признаки ошибок накопителя или файловой системы."
 else
+  KERNEL_STATUS="ошибок не найдено"
   ok "Критические I/O, timeout и EXT4-ошибки не найдены."
 fi
 
 separator
 printf '4. Контролируемая запись в корневой раздел\n'
 if [ "$WRITE_TEST" != "yes" ]; then
+  ROOT_WRITE_STATUS="пропущена (--no-write)"
   printf '  [SKIP] Тест отключён параметром --no-write.\n'
 elif [ "$ROOT_RW" != "yes" ]; then
+  ROOT_WRITE_STATUS="невозможна: корень не rw"
   fail "Тест записи невозможен: корень не в режиме rw."
 else
   FREE_KB="$(df -Pk / 2>/dev/null | awk 'NR==2 {print $4}')"
   printf '  Свободно до теста: %s КиБ\n' "${FREE_KB:-не определено}"
   if [ "${FREE_KB:-0}" -lt 4096 ] 2>/dev/null; then
+    ROOT_WRITE_STATUS="пропущена: мало места"
     fail "Менее 4 МиБ свободного места; тест записи пропущен."
   else
     TEST_FILE="/server-diag-emmc-test-$$.bin"
@@ -250,11 +313,14 @@ else
       printf '  Контрольная сумма после sync: %s\n' "${CHECKSUM_1:-недоступна}"
       printf '  Контрольная сумма повторного чтения: %s\n' "${CHECKSUM_2:-недоступна}"
       if [ "$WRITTEN_SIZE" = "1048576" ] && [ -n "$CHECKSUM_1" ] && [ "$CHECKSUM_1" = "$CHECKSUM_2" ]; then
+        ROOT_WRITE_STATUS="успешна"
         ok "Запись 1 МиБ, sync и повторное чтение прошли успешно."
       else
+        ROOT_WRITE_STATUS="ошибка проверки"
         fail "Размер или контрольная сумма после записи не совпали."
       fi
     else
+      ROOT_WRITE_STATUS="ошибка записи"
       WRITE_ERROR_TEXT="$(tail -n 3 "$TEST_ERROR" 2>/dev/null | tr '\n' ' ')"
       fail "Запись в корень завершилась ошибкой: ${WRITE_ERROR_TEXT:-неизвестная ошибка}"
     fi
@@ -268,6 +334,24 @@ else
       TEST_ERROR=""
     fi
   fi
+fi
+
+separator
+printf 'КРАТКИЙ ИТОГ\n'
+printf '  eMMC: %s\n' "$EMMC_STATUS"
+printf '  Основной блок: %s\n' "$BLOCK_STATUS"
+printf '  Показатели износа: %s\n' "$WEAR_STATUS"
+printf '  Ошибки ядра: %s\n' "$KERNEL_STATUS"
+printf '  Проверка записи в /: %s\n' "$ROOT_WRITE_STATUS"
+if [ "$FAILURES" -eq 0 ] && [ "$ROOT_WRITE_STATUS" = "успешна" ] && [ "$KERNEL_STATUS" = "ошибок не найдено" ]; then
+  printf '  Вывод: текущая запись и чтение работают; критических ошибок не обнаружено.\n'
+  if [ "$WEAR_STATUS" = "недоступны" ]; then
+    printf '  Ограничение: остаточный ресурс eMMC этой прошивкой не определяется.\n'
+  fi
+elif [ "$FAILURES" -gt 0 ]; then
+  printf '  Вывод: обнаружена ошибка; накопитель или файловая система требуют анализа.\n'
+else
+  printf '  Вывод: проверка выполнена частично; смотрите предупреждения выше.\n'
 fi
 
 separator
