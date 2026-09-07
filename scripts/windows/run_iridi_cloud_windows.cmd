@@ -14,7 +14,7 @@ for /f "delims=" %%V in ('powershell.exe -NoLogo -NoProfile -Command "$PSVersion
 
 if not defined PS_MAJOR (
     echo [ERROR] Windows PowerShell was not found.
-    echo Please contact the support engineer.
+    echo Install or enable Windows PowerShell, then run the tool again.
     echo.
     pause
     exit /b 2
@@ -40,9 +40,11 @@ set "EXIT_CODE=%ERRORLEVEL%"
 echo.
 echo ================================================================
 if "%EXIT_CODE%"=="0" (
-    echo Diagnostics completed successfully.
+    powershell.exe -NoLogo -NoProfile -Command "Write-Host 'RESULT: PASS - OK' -ForegroundColor Green"
+) else if "%EXIT_CODE%"=="1" (
+    powershell.exe -NoLogo -NoProfile -Command "Write-Host 'RESULT: WARN - ATTENTION REQUIRED' -ForegroundColor Yellow"
 ) else (
-    echo Diagnostics found unavailable resources or an execution error.
+    powershell.exe -NoLogo -NoProfile -Command "Write-Host 'RESULT: FAIL - NOT OK' -ForegroundColor Red"
 )
 echo Log files are stored in:
 echo %~dp0logs

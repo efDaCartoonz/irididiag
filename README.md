@@ -1,45 +1,69 @@
 # iRidi Diagnostics Scripts
 
-Набор автономных инструментов для диагностики серверов и облачных ресурсов
-iRidi. Linux-версии работают с POSIX `sh`, включая BusyBox на HS Server;
-Windows-версии рассчитаны на штатный Windows PowerShell.
+A collection of standalone tools for diagnosing iRidi servers, storage, and
+cloud connectivity. The Linux scripts use portable POSIX `sh` and support
+BusyBox-based HS Server firmware. The Windows scripts support the built-in
+Windows PowerShell versions found on Windows 7, 10, and 11.
 
-## Структура архива
+## Repository layout
 
-- `scripts/windows` — запуск с компьютера Windows;
-- `scripts/linux` — запуск на Linux, Debian и прошивках BusyBox.
+- `scripts/linux` — Linux, Debian, and BusyBox-based firmware;
+- `scripts/windows` — Windows 7, Windows 10, and Windows 11.
+
+### Linux and BusyBox
+
+| File | Purpose |
+| --- | --- |
+| `check_i3knx.sh` | Application-level checks for i3 KNX cloud resources and an active Cloud Gate session |
+| `check_bus77_home.sh` | Application-level checks for Bus77 Home cloud resources |
+| `check_bus77_lite.sh` | Application-level checks for Bus77 Lite cloud resources |
+| `check_iridi_pro_ru.sh` | iRidi Pro Cloud checks for the RU region |
+| `check_iridi_pro_eu.sh` | iRidi Pro Cloud checks for the EU region |
+| `check_emmc_health.sh` | eMMC health, root write path, overlay, and kernel error diagnostics |
 
 ### Windows
 
-| Файл | Назначение |
+| File | Purpose |
 | --- | --- |
-| `check_iridi_cloud_windows_10_11.ps1` | Универсальная проверка облака с Windows 10/11 и PowerShell 5.1 |
-| `check_iridi_cloud_windows_7.ps1` | Универсальная проверка облака с Windows 7 и PowerShell 2.0+ |
-| `run_iridi_cloud_windows.cmd` | Простой запуск Windows: выбор продукта в меню и автоматический лог |
+| `run_iridi_cloud_windows.cmd` | Double-click launcher with a product menu and automatic logging |
+| `check_iridi_cloud_windows_10_11.ps1` | Cloud diagnostics for Windows 10/11 and Windows PowerShell 5.1 |
+| `check_iridi_cloud_windows_7.ps1` | Cloud diagnostics for Windows 7 and Windows PowerShell 2.0 or newer |
 
-### Linux и BusyBox
+## Result colors and exit codes
 
-| Файл | Назначение |
-| --- | --- |
-| `check_i3knx.sh` | Прикладная проверка облачных ресурсов i3 KNX и активной Cloud Gate-сессии |
-| `check_bus77_home.sh` | Прикладная проверка облачных ресурсов Bus77 Home |
-| `check_bus77_lite.sh` | Прикладная проверка облачных ресурсов Bus77 Lite |
-| `check_iridi_pro_ru.sh` | Проверка iRidi Pro Cloud для региона RU |
-| `check_iridi_pro_eu.sh` | Проверка iRidi Pro Cloud для региона EU |
-| `check_emmc_health.sh` | Состояние eMMC, проверка записи, overlay и автоматический лог |
+Interactive output uses the following status colors:
 
-Облачные проверки выполняют DNS-разрешение и реальный HTTP(S) GET, показывают
-фактический IP, HTTP-статус, тип и размер полезной нагрузки. При сетевой ошибке
-без HTTP-ответа запрос повторяется до трёх раз. Ответы закрытых хранилищ `403`
-считаются подтверждением доступности ресурса. Ход проверки одновременно
-отображается в терминале и сохраняется в отдельный лог. В конце выводится
-краткое резюме и статус `PASS`, `WARN` или `FAIL`.
-Имя файла содержит профиль, имя сервера и время запуска, например
-`cloud_bus77_home_SERVER_20260901_153000_1234.log`.
+- green — `[OK]` and `RESULT: PASS`;
+- yellow — `[ATTENTION]` and `RESULT: WARN`;
+- red — `[NOT OK]` and `RESULT: FAIL`.
 
-## Быстрый запуск
+Linux colors are enabled only when output is connected to a terminal. Set
+`NO_COLOR=1` to disable them. Log files remain plain text and never contain ANSI
+color sequences.
 
-Замените имя файла в командах на нужный скрипт:
+Exit codes are consistent across the current tools:
+
+- `0` — `PASS`: required checks passed;
+- `1` — `WARN`: the main checks passed, but one or more items require attention;
+- `2` — `FAIL`: a required check failed or the tool could not complete safely.
+
+## Cloud diagnostics on Linux
+
+The cloud checks do more than ping a host or open a port. Each script performs
+DNS resolution and a real HTTP(S) GET request, reads the response payload, and
+reports the actual IP address, documented IP address, HTTP status, content type,
+payload size, request time, and retry count. Network failures without an HTTP
+response are retried up to three times. A `403` response from protected storage
+still confirms application-level reachability.
+
+The terminal shows live progress while a separate log file is created for every
+run. A typical file name is:
+
+```text
+cloud_bus77_home_SERVER_20260901_153000_1234.log
+```
+
+Download and run a script with `wget`:
 
 ```sh
 cd /tmp
@@ -47,7 +71,7 @@ wget --no-check-certificate https://raw.githubusercontent.com/efDaCartoonz/iridi
 sh check_bus77_home.sh
 ```
 
-Для остальных продуктов:
+Run the other product profiles in the same way:
 
 ```sh
 sh check_i3knx.sh
@@ -56,24 +80,24 @@ sh check_iridi_pro_ru.sh
 sh check_iridi_pro_eu.sh
 ```
 
-## Запуск в Windows
+Cloud Gate is evaluated from an active `iridium` process session on the Linux
+server. Run the matching product script on a server with that product active;
+otherwise, a detected session may belong to different software.
 
-1. Скачайте [ZIP-архив репозитория](https://github.com/efDaCartoonz/irididiag/archive/refs/heads/main.zip).
-2. Полностью распакуйте архив.
-3. Откройте каталог `scripts\windows` и дважды нажмите
-   `run_iridi_cloud_windows.cmd`.
-4. Выберите цифрой нужный продукт: i3 KNX, Bus77 Home, Bus77 Lite, iRidi Pro RU
-   или iRidi Pro EU.
+## Cloud diagnostics on Windows
 
-В окне виден ход проверки каждого ресурса. После завершения окно остаётся
-открытым, а полный результат сохраняется в `scripts\windows\logs`. Для каждого
-запуска создаётся отдельный файл с продуктом, регионом и временем в имени, например
-`iridi_pro_eu_20260901_143000.log`. Лаунчер сам определяет версию PowerShell и
-выбирает совместимый сценарий для Windows 7 или Windows 10/11.
+1. Download the [repository ZIP archive](https://github.com/efDaCartoonz/irididiag/archive/refs/heads/main.zip).
+2. Extract the entire archive.
+3. Open `scripts\windows`.
+4. Double-click `run_iridi_cloud_windows.cmd`.
+5. Select i3 KNX, Bus77 Home, Bus77 Lite, iRidi Pro RU, or iRidi Pro EU.
 
-## Windows 10 и Windows 11: запуск с параметрами
+The launcher detects the installed Windows PowerShell version, selects the
+compatible diagnostic engine, displays live progress, and keeps the window open
+after completion. Each run is saved under `scripts\windows\logs` with the
+product, region, and timestamp in the file name.
 
-Скачайте универсальный файл в PowerShell:
+Windows 10/11 can also run the PowerShell script directly:
 
 ```powershell
 Set-Location $env:TEMP
@@ -81,7 +105,7 @@ curl.exe -fL "https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scri
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\check_iridi_cloud_windows_10_11.ps1 -Product bus77-home
 ```
 
-Доступные значения `-Product`:
+Supported parameters:
 
 ```powershell
 -Product i3knx
@@ -91,33 +115,27 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\check_iridi_cloud_wind
 -Product iridi-pro -Region EU
 ```
 
-## Windows 7: запуск с параметрами
-
-Скачайте файл через браузер или из `cmd.exe` штатной утилитой Windows:
+Windows 7 can run its compatible script directly:
 
 ```bat
 certutil.exe -urlcache -split -f "https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/windows/check_iridi_cloud_windows_7.ps1" "%TEMP%\check_iridi_cloud_windows_7.ps1"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%TEMP%\check_iridi_cloud_windows_7.ps1" -Product bus77-home
 ```
 
-Windows 7-версия совместима с синтаксисом PowerShell 2.0 и выполняет HTTPS GET
-через встроенный WinHTTP с явным включением TLS 1.2. Если Windows 7 давно не
-обновлялась и системный SChannel не поддерживает TLS 1.2, скрипт выведет
-понятную ошибку соединения — это будет проблемой ОС, а не облачного ресурса.
+The Windows 7 version uses the built-in WinHTTP component and explicitly enables
+TLS 1.2. If the operating system does not provide TLS 1.2 support, the script
+reports a connection error so it can be distinguished from a cloud service
+response.
 
-Обе Windows-версии выполняют реальный HTTP(S) GET с чтением полезной нагрузки и
-пытаются установить TCP-соединение с Cloud Gate на портах 9088/9089. Результат
-автоматически сохраняется в подкаталог `logs` рядом со скриптом.
+## eMMC diagnostics
 
-## Диагностика eMMC
-
-Полная проверка запускается от `root`:
+Run the full diagnostic as `root`:
 
 ```sh
 sh check_emmc_health.sh
 ```
 
-Загрузка и запуск актуальной версии:
+Download the current version with `wget`:
 
 ```sh
 cd /tmp
@@ -125,38 +143,26 @@ wget --no-check-certificate https://raw.githubusercontent.com/efDaCartoonz/iridi
 sh check_emmc_health.sh
 ```
 
-Ход проверки виден в терминале. Одновременно в текущем каталоге автоматически
-создаётся отдельный файл вида
-`emmc_diagnostic_ИМЯ-СЕРВЕРА_ГГГГММДД_ЧЧММСС_PID.log`, пригодный для последующего
-анализа.
+The script reports the eMMC model, manufacturer, `LIFE_TIME`, `PRE_EOL_INFO`,
+`USER_WP`, block-device read-only state, root filesystem, relevant kernel errors,
+and the complete root write path. On overlay systems it also reports the
+`upperdir`, `workdir`, backing filesystem, mount mode, free space, and inode use.
 
-Скрипт определяет eMMC и флаг read-only, ищет ошибки накопителя в журнале ядра,
-записывает 1 МиБ непосредственно в `/`, выполняет `sync`, дважды читает файл и
-сравнивает контрольные суммы. Тестовый файл автоматически удаляется.
-
-Если корень работает через overlay, отчёт дополнительно показывает `upperdir`,
-`workdir`, реальный раздел верхнего слоя и его режим `rw/ro`. Это позволяет
-отличить аппаратную доступность eMMC от неисправности overlay или файловой
-системы: блочное устройство может иметь `ro=0`, а запись через `/` всё равно
-завершаться ошибкой.
-
-Пассивная проверка без записи:
+By default, it creates a temporary 1 MiB file directly under `/`, runs `sync`,
+reads the file twice, compares checksums, and removes the file. This verifies the
+actual write path through the root filesystem or overlay. Use the read-only mode
+to collect passive information without creating the test file:
 
 ```sh
 sh check_emmc_health.sh --no-write
 ```
 
-Скрипт не пишет напрямую в блочное устройство, не запускает `fsck` и не
-перемонтирует разделы. Результат `PASS` не исключает скрытую или периодическую
-неисправность накопителя.
+The script never writes directly to the block device, runs `fsck`, or remounts a
+filesystem. A `PASS` result confirms the checks performed during that run; it
+does not rule out intermittent faults or replace a full-device endurance test.
 
-## Коды завершения
+Every run creates a plain-text log such as:
 
-- Linux-проверки облака: `0` — `PASS`, `1` — `WARN`, `2` — `FAIL`;
-- Windows-проверки облака: `0` — обязательные ресурсы доступны, `1` — есть
-  недоступные ресурсы;
-- проверка eMMC: `0` — `PASS`, `1` — `WARN`, `2` — `FAIL`.
-
-Cloud Gate проверяется по активной сессии процесса `iridium`. Запускайте
-продуктовый скрипт на сервере с соответствующим установленным ПО, иначе найденная
-сессия может относиться к другому продукту.
+```text
+emmc_diagnostic_SERVER_20260901_153000_1234.log
+```

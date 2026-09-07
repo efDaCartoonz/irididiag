@@ -11,6 +11,21 @@ param(
     [string]$Region = "RU"
 )
 
+function Write-Status {
+    param(
+        [ValidateSet("OK", "ATTENTION", "NOT OK")]
+        [string]$Level,
+        [string]$Message
+    )
+
+    $line = "[{0}] {1}" -f $Level, $Message
+    switch ($Level) {
+        "OK" { Write-Host $line -ForegroundColor Green }
+        "ATTENTION" { Write-Host $line -ForegroundColor Yellow }
+        "NOT OK" { Write-Host $line -ForegroundColor Red }
+    }
+}
+
 if (-not $Product) {
     while (-not $Product) {
         Clear-Host
@@ -42,7 +57,7 @@ if (-not $Product) {
 $Product = $Product.ToLowerInvariant()
 $SupportedProducts = @("i3knx", "bus77-home", "bus77-lite", "iridi-pro")
 if (-not ($SupportedProducts -contains $Product)) {
-    Write-Host ("[ERROR] Unknown product: {0}" -f $Product)
+    Write-Status "NOT OK" ("Unknown product: {0}" -f $Product)
     Write-Host "Allowed values: i3knx, bus77-home, bus77-lite, iridi-pro"
     exit 2
 }
@@ -66,7 +81,7 @@ try {
     Start-Transcript -Path $LogPath | Out-Null
     $TranscriptStarted = $true
 } catch {
-    Write-Host ("[WARN] Could not start the log file: {0}" -f $_.Exception.Message)
+    Write-Status "ATTENTION" ("Could not start the log file: {0}" -f $_.Exception.Message)
 }
 
 $ErrorActionPreference = "Continue"
@@ -279,24 +294,24 @@ function Test-HttpResource {
 
     if (($Resource.ExpectedIp -ne "dynamic") -and ($resolvedAddresses.Count -gt 0)) {
         if (-not ($resolvedAddresses -contains $Resource.ExpectedIp)) {
-            Write-Host "  [WARN] DNS addresses differ from the documented IP (CDN or proxy may be in use)."
+            Write-Status "ATTENTION" "DNS addresses differ from the documented IP (a CDN or proxy may be in use)."
             $script:WarningCount = $script:WarningCount + 1
         }
     }
 
     if (($statusCode -ge 200) -and ($statusCode -lt 500)) {
         if ($attempt -gt 1) {
-            Write-Host "  [WARN] The response was received after a retry; the connection was unstable."
+            Write-Status "ATTENTION" "The response was received after a retry; the connection may be unstable."
             $script:WarningCount = $script:WarningCount + 1
         }
-        Write-Host "  [OK] Application-level HTTP response and payload received."
+        Write-Status "OK" "Application-level HTTP response and payload received."
         return $true
     }
 
     if ($statusCode -ge 500) {
-        Write-Host ("  [FAIL] The service returned HTTP {0}." -f $statusCode)
+        Write-Status "NOT OK" ("The service returned HTTP {0}." -f $statusCode)
     } else {
-        Write-Host ("  [FAIL] No HTTP response after {0} attempts." -f $attempt)
+        Write-Status "NOT OK" ("No HTTP response after {0} attempts." -f $attempt)
         if ($lastError) {
             Write-Host ("  Error: {0}" -f $lastError)
         }
@@ -356,10 +371,10 @@ foreach ($gateHost in $GateHosts) {
     foreach ($gatePort in @(9088, 9089)) {
         $GateTotal = $GateTotal + 1
         if (Test-TcpPort $gateHost $gatePort) {
-            Write-Host ("  [OK] {0}:{1} accepts TCP connections." -f $gateHost, $gatePort)
+            Write-Status "OK" ("{0}:{1} accepts TCP connections." -f $gateHost, $gatePort)
             $GateOk = $GateOk + 1
         } else {
-            Write-Host ("  [WARN] {0}:{1} did not accept a TCP connection." -f $gateHost, $gatePort)
+            Write-Status "ATTENTION" ("{0}:{1} did not accept a TCP connection." -f $gateHost, $gatePort)
             $WarningCount = $WarningCount + 1
         }
     }
@@ -368,19 +383,24 @@ foreach ($gateHost in $GateHosts) {
 $GateFailed = $false
 if ($GateOk -eq 0) {
     $GateFailed = $true
-    Write-Host "  [FAIL] No documented Cloud Gate endpoint accepted a TCP connection."
+    Write-Status "NOT OK" "No documented Cloud Gate endpoint accepted a TCP connection."
 } else {
-    Write-Host ("  [OK] Cloud Gate is reachable through {0} of {1} tested endpoints." -f $GateOk, $GateTotal)
+    Write-Status "OK" ("Cloud Gate is reachable through {0} of {1} tested endpoints." -f $GateOk, $GateTotal)
 }
 
 Write-Separator
 Write-Host ("SUMMARY {0}: HTTP checked {1}, available {2}, failed {3}, warnings {4}" -f $ProductLabel, $HttpTotal, $HttpOk, $HttpFail, $WarningCount)
 if (($HttpFail -eq 0) -and (-not $GateFailed)) {
-    Write-Host "RESULT: PASS - required HTTP resources and Cloud Gate are reachable."
-    $ExitCode = 0
+    if ($WarningCount -gt 0) {
+        Write-Host "RESULT: WARN - ATTENTION REQUIRED: required services are reachable, but warnings were found." -ForegroundColor Yellow
+        $ExitCode = 1
+    } else {
+        Write-Host "RESULT: PASS - OK: required HTTP resources and Cloud Gate are reachable." -ForegroundColor Green
+        $ExitCode = 0
+    }
 } else {
-    Write-Host "RESULT: FAIL - one or more required cloud checks failed."
-    $ExitCode = 1
+    Write-Host "RESULT: FAIL - NOT OK: one or more required cloud checks failed." -ForegroundColor Red
+    $ExitCode = 2
 }
 
 Write-Host ("Log saved: {0}" -f $LogPath)
