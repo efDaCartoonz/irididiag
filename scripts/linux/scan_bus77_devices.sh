@@ -27,10 +27,10 @@ if [ "${IRIDI_BUS77_SCAN_LOG_ACTIVE:-0}" != "1" ]; then
 
   colorize_output() {
     awk '
-      /\[OK\]|RESULT: PASS/ { printf "\033[32m%s\033[0m\n", $0; next }
-      /\[ATTENTION\]|RESULT: WARN/ { printf "\033[33m%s\033[0m\n", $0; next }
-      /\[NOT OK\]|RESULT: FAIL/ { printf "\033[31m%s\033[0m\n", $0; next }
-      { print }
+      /\[OK\]|RESULT: PASS/ { printf "\033[32m%s\033[0m\n", $0; fflush(); next }
+      /\[ATTENTION\]|RESULT: WARN/ { printf "\033[33m%s\033[0m\n", $0; fflush(); next }
+      /\[NOT OK\]|RESULT: FAIL/ { printf "\033[31m%s\033[0m\n", $0; fflush(); next }
+      { print; fflush() }
     '
   }
 
@@ -65,7 +65,7 @@ fi
 set +e
 export LC_ALL=C
 
-SCRIPT_VERSION=1.0
+SCRIPT_VERSION=1.1
 CAN_INTERFACE=can0
 RESPONSE_TIMEOUT=5
 SCANNER_CAN_ID=65534
@@ -522,16 +522,20 @@ else
   ok "Decoded Device Info for all $INFO_COUNT discovered devices."
 fi
 
+if [ -n "${IRIDI_BUS77_INVENTORY_FILE:-}" ]; then
+  cat "$INFO_RESULTS" >"$IRIDI_BUS77_INVENTORY_FILE" || warn 'Could not export inventory for the traffic decoder.'
+fi
 if [ "$INFO_COUNT" -gt 0 ]; then
-  printf '\n  %-4s %-24s %-10s %s\n' 'LID' 'MODEL' 'FIRMWARE' 'CAN ID'
-  awk -F'|' '{printf "  %-4s %-24s %-10s 0x%s\n", $1, $5, $8, $2}' "$INFO_RESULTS"
+  printf '\n  %-4s %-24s %-10s %-8s %s\n' 'LID' 'MODEL' 'FIRMWARE' 'PROFILE' 'CAN ID'
+  awk -F'|' '{printf "  %-4s %-24s %-10s %-8s 0x%s\n", $1, $5, $8, $7, $2}' "$INFO_RESULTS"
   while IFS='|' read -r LID CAN_ID NAME PRODUCER MODEL HWID FIRMWARE_ID VERSION CHANNELS TAGS GROUP DEVICE_CLASS PROCESSOR OPERATING_SYSTEM DEVICE_FLAGS USER_ID; do
     printf '\n  LID %s | %s\n' "$LID" "${MODEL:-unknown model}"
     printf '    Name:             %s\n' "${NAME:-not set}"
     printf '    Producer:         %s\n' "${PRODUCER:-not set}"
     printf '    HWID:             %s\n' "${HWID:-not set}"
     printf '    CAN device ID:    0x%s\n' "$CAN_ID"
-    printf '    Firmware:         ID %s, version %s\n' "$FIRMWARE_ID" "$VERSION"
+    printf '    Firmware version: %s\n' "$VERSION"
+    printf '    Firmware profile: %s (Firmware ID)\n' "$FIRMWARE_ID"
     printf '    Channels / tags:  %s / %s\n' "$CHANNELS" "$TAGS"
     printf '    Group/class:      %s / %s\n' "$GROUP" "$DEVICE_CLASS"
     printf '    Processor / OS:   %s / %s\n' "$PROCESSOR" "$OPERATING_SYSTEM"

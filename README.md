@@ -20,8 +20,8 @@ Windows PowerShell versions found on Windows 7, 10, and 11.
 | `check_iridi_pro_ru.sh` | iRidi Pro Cloud checks for the RU region |
 | `check_iridi_pro_eu.sh` | iRidi Pro Cloud checks for the EU region |
 | `check_emmc_health.sh` | eMMC health, root write path, overlay, and kernel error diagnostics |
-| `check_can_bus.sh` | CAN/Bus77 interface health, counters, gateway settings, and observed participants |
-| `monitor_can_bus.sh` | Live passive CAN/Bus77 packet monitor with RX/TX and bus composition summaries |
+| `check_can_bus.sh` | Device inventory (HWID, model, name, firmware/profile), then CAN health |
+| `monitor_can_bus.sh` | Named sender-to-receiver Bus77 messages, commands, values and route summaries |
 | `scan_bus77_devices.sh` | Read-only active Bus77 discovery with model, HWID, firmware, and channel counts |
 
 ### Windows
@@ -89,12 +89,11 @@ otherwise, a detected session may belong to different software.
 
 ## CAN/Bus77 diagnostics on HSS and ProAV
 
-The check and monitor tools are passive: they never send CAN frames and never change the
-interface configuration. By default, they automatically detect and inspect all
-SocketCAN interfaces, including both channels on platforms that provide `can0`
-and `can1`.
+Two self-contained tools: download only the file you want to run.
+No companion script, package installation or interface reconfiguration is needed
+when the server already provides `ip`, `candump`, `cansend` and BusyBox awk.
 
-Download and run the short diagnostic:
+### Device inventory and bus health
 
 ```sh
 cd /tmp
@@ -102,12 +101,13 @@ wget --no-check-certificate https://raw.githubusercontent.com/efDaCartoonz/iridi
 sh check_can_bus.sh
 ```
 
-The diagnostic reports the controller state, bitrate, driver, carrier, CAN
-error-state history, packet and error counter changes, active iRidi Server data
-directory, CAN gateway settings, gateway listeners, and observed RX participant
-signatures. Its default passive sample lasts 15 seconds.
+The report starts with the responding devices: LID, full HWID, model, device
+name, firmware version and **firmware profile number (Firmware ID)**.
+Then it reports CAN controller state, bitrate, historical errors, new errors
+and dropped frames, RX/TX activity and server gateway settings.
+The health observation lasts 15 seconds, after discovery has finished.
 
-Download and run the live monitor:
+### Who sends what to whom
 
 ```sh
 cd /tmp
@@ -115,43 +115,52 @@ wget --no-check-certificate https://raw.githubusercontent.com/efDaCartoonz/iridi
 sh monitor_can_bus.sh
 ```
 
-The monitor displays each packet with its interface, RX/TX direction, CAN ID,
-length, and payload. After 60 seconds it prints kernel counter changes and a
-summary of observed RX and TX participant signatures.
+The monitor first reads device identities, then listens passively for 60 seconds.
+It reassembles CAN frames into Bus77 packets and displays:
 
-Optional parameters can select one channel or change the observation time:
+```text
+TIME     CAN   RX/TX  SENDER -> RECEIVER | REQUEST/RESPONSE COMMAND | DETAILS
+12:34:56 can0  TX     SERVER/GW(LID 0) -> LID 2 DM-306PS | REQUEST GetChannelValue tid=42 | channel=123
+12:34:56 can0  RX     LID 2 DM-306PS [464E] -> SERVER/GW(LID 0) | RESPONSE GetChannelValue tid=42 | channel=123 value=42
+```
+
+This is an illustrative format, not a claim that these exact commands are active
+on every bus. `RX/TX` is relative to the server, and `ALL (broadcast)` means no
+individual recipient. `S3:LID 0` identifies segment 3, local address 0;
+`SERVER/GW` denotes the local transmission path, which can forward upstream
+clients rather than originate every command. The monitor decodes supported channel, tag and variable
+IDs and values. Unknown payloads remain hex; partial messages, unsupported
+formats and CRC failures are marked explicitly. A model name is not inferred
+from an unknown device address. Channel names and engineering units are not
+inferred without the corresponding device descriptions.
+
+A route summary and bus counters follow the live stream. Requests are cyan,
+responses green and error notices red/yellow on a color-capable terminal.
+A plain-text log is saved automatically. Logs contain device identities and bus
+values; review them before sharing. Session-token and firmware-stream payloads
+are hidden.
+
+### Options and safety
 
 ```sh
 sh check_can_bus.sh --interface can0 --duration 30
 sh monitor_can_bus.sh --interface can1 --duration 300
+sh monitor_can_bus.sh --passive --duration 60
 ```
 
-Passive reports decode the 16-bit CAN device ID from Extended ID bits 28..13 and
-source LID candidates from apparent Bus77 packet headers, without CRC validation.
-Use the active scanner to verify device identities. Silent devices are not visible and
-their model or full HWID is not requested.
+Both tools default to all detected SocketCAN interfaces. `--duration` controls
+the observation time, not discovery. `--passive` suppresses all outgoing
+diagnostic requests; identities and firmware profiles will not be read.
 
-To request a read-only Bus77 inventory, download and run the active scanner:
+By default, discovery sends only one System Search and one Device Info request
+per discovered LID. It never changes addresses, channels, firmware or CAN
+configuration. Only responding devices can be listed. Run only one diagnostic
+or monitor at a time: discovery uses CAN ID `0xFFFE` and LID `254`, aborting if
+that identity is observed in the initial sample. Silent address conflicts cannot
+be excluded. Incomplete identity data or traffic yields an explicit warning.
 
-```sh
-cd /tmp
-wget --no-check-certificate https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/linux/scan_bus77_devices.sh
-sh scan_bus77_devices.sh
-```
-
-The scanner sends one System Search request and one Device Info request per
-discovered LID. It validates CRC16 and reports device name, producer, model,
-full HWID, CAN device ID, firmware ID and version, and channel/tag counts. It
-does not send address assignment, identification LED, channel control, or
-firmware commands.
-
-Run only one scanner at a time. It uses CAN ID `0xFFFE` and LID `254` and stops
-if this identity is observed in its initial sample. Silent address conflicts
-cannot be ruled out. The default interface is `can0`; use `--interface can1`
-to select another channel and `--timeout 10` for a longer response window.
-Only responding devices are listed; an incomplete profile produces `WARN`.
-Responses are reassembled, CRC-checked and matched to the discovered CAN ID,
-LID and HWID, including devices that omit the optional transaction ID.
+`scan_bus77_devices.sh` remains available as an optional inventory-only tool
+for compatibility; neither of the two main tools requires it as a separate file.
 Protocol reference: [official BUS77 SDK](https://github.com/iRidium-Mobile/BUS77-SDK).
 
 ## Cloud diagnostics on Windows
