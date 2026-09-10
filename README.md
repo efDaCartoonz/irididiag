@@ -20,6 +20,8 @@ Windows PowerShell versions found on Windows 7, 10, and 11.
 | `check_iridi_pro_ru.sh` | iRidi Pro Cloud checks for the RU region |
 | `check_iridi_pro_eu.sh` | iRidi Pro Cloud checks for the EU region |
 | `check_emmc_health.sh` | eMMC health, root write path, overlay, and kernel error diagnostics |
+| `check_can_bus.sh` | CAN/Bus77 interface health, counters, gateway settings, and observed participants |
+| `monitor_can_bus.sh` | Live passive CAN/Bus77 packet monitor with RX/TX and bus composition summaries |
 
 ### Windows
 
@@ -83,6 +85,51 @@ sh check_iridi_pro_eu.sh
 Cloud Gate is evaluated from an active `iridium` process session on the Linux
 server. Run the matching product script on a server with that product active;
 otherwise, a detected session may belong to different software.
+
+## CAN/Bus77 diagnostics on HSS and ProAV
+
+Both CAN tools are passive: they never send CAN frames and never change the
+interface configuration. By default, they automatically detect and inspect all
+SocketCAN interfaces, including both channels on platforms that provide `can0`
+and `can1`.
+
+Download and run the short diagnostic:
+
+```sh
+cd /tmp
+wget --no-check-certificate https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/linux/check_can_bus.sh
+sh check_can_bus.sh
+```
+
+The diagnostic reports the controller state, bitrate, driver, carrier, CAN
+error-state history, packet and error counter changes, active iRidi Server data
+directory, CAN gateway settings, gateway listeners, and observed RX identifier
+families. Its default passive sample lasts 15 seconds.
+
+Download and run the live monitor:
+
+```sh
+cd /tmp
+wget --no-check-certificate https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/linux/monitor_can_bus.sh
+sh monitor_can_bus.sh
+```
+
+The monitor displays each packet with its interface, RX/TX direction, CAN ID,
+length, and payload. After 60 seconds it prints kernel counter changes and a
+summary of observed RX and TX identifier families.
+
+Optional parameters can select one channel or change the observation time:
+
+```sh
+sh check_can_bus.sh --interface can0 --duration 30
+sh monitor_can_bus.sh --interface can1 --duration 300
+```
+
+The participant list is inferred from passively observed RX identifier families.
+It does not perform the proprietary Bus77 discovery procedure, assign addresses,
+or modify devices. Silent devices are therefore not listed, and exact Bus77
+model, LID, and HWID values may require the Bus77 scanner in iRidi Studio or
+Bus77 Home.
 
 ## Cloud diagnostics on Windows
 
