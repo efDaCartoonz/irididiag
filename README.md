@@ -116,6 +116,9 @@ The health observation lasts 15 seconds, after discovery has finished.
 
 ### Who sends what to whom
 
+Read the [Bus77 monitoring guide](BUS77_MONITORING_GUIDE.md) for field explanations,
+button/on-off experiments, example messages and interpretation limits.
+
 ```sh
 cd /tmp
 wget --no-check-certificate -O monitor_can_bus.sh https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/linux/monitor_can_bus.sh &&
