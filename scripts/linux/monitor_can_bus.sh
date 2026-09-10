@@ -296,17 +296,30 @@ for CAN_INTERFACE in $INTERFACES; do
   for DIRECTION in RX TX; do
     FAMILY_FILE="$WORK_DIR/$CAN_INTERFACE.$DIRECTION.families"
     awk -v dev="$CAN_INTERFACE" -v direction="$DIRECTION" '
+      function hex_digit(value) {
+        return index("0123456789ABCDEF", value) - 1
+      }
+      function hex_byte(value) {
+        return (hex_digit(substr(value, 1, 1)) * 16) + hex_digit(substr(value, 2, 1))
+      }
       $1 == dev && $2 == direction {
         id = toupper($5)
         if (id ~ /^2/) next
         family = id
-        if (length(id) == 8) family = substr(id, 1, 6) "xx"
+        if (length(id) == 8) family = substr(id, 1, 4) "xxxx"
         count[family]++
         seen[family, id] = 1
+        first_byte = toupper($7)
+        second_byte = toupper($8)
+        lid = toupper($11)
+        if (direction == "RX" && first_byte == "7D" && second_byte == "A8" && length(lid) == 2 && lid ~ /^[0-9A-F]+$/) {
+          seen_lid[family, lid] = 1
+        }
       }
       END {
         for (family in count) {
           ids = ""
+          lids = ""
           for (key in seen) {
             split(key, parts, SUBSEP)
             if (parts[1] == family) {
@@ -314,14 +327,23 @@ for CAN_INTERFACE in $INTERFACES; do
               else ids = ids "," parts[2]
             }
           }
-          print family "|" count[family] "|" ids
+          for (lid_key in seen_lid) {
+            split(lid_key, lid_parts, SUBSEP)
+            if (lid_parts[1] == family) {
+              lid_label = hex_byte(lid_parts[2]) " (0x" lid_parts[2] ")"
+              if (lids == "") lids = lid_label
+              else lids = lids "," lid_label
+            }
+          }
+          if (lids == "") lids = "not decoded"
+          print family "|" count[family] "|" ids "|" lids
         }
       }
     ' "$CAPTURE_FILE" | sort >"$FAMILY_FILE"
     FAMILY_COUNT="$(wc -l <"$FAMILY_FILE" | tr -d ' ')"
-    printf '\n  %s %s: %s identifier families\n' "$CAN_INTERFACE" "$DIRECTION" "${FAMILY_COUNT:-0}"
+    printf '\n  %s %s: %s participant signatures\n' "$CAN_INTERFACE" "$DIRECTION" "${FAMILY_COUNT:-0}"
     if [ -s "$FAMILY_FILE" ]; then
-      awk -F'|' '{ printf "    family=%-10s frames=%-6s ids=%s\n", $1, $2, $3 }' "$FAMILY_FILE"
+      awk -F'|' '{ printf "    signature=%-10s Bus77 LID candidate=%-14s frames=%-6s ids=%s\n", $1, $4, $2, $3 }' "$FAMILY_FILE"
     else
       printf '    none observed\n'
     fi

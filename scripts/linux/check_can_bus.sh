@@ -427,26 +427,48 @@ else
   for CAN_INTERFACE in $INTERFACES; do
     PARTICIPANT_FILE="$WORK_DIR/$CAN_INTERFACE.participants"
     awk -v dev="$CAN_INTERFACE" '
+      function hex_digit(value) {
+        return index("0123456789ABCDEF", value) - 1
+      }
+      function hex_byte(value) {
+        return (hex_digit(substr(value, 1, 1)) * 16) + hex_digit(substr(value, 2, 1))
+      }
       $1 == dev && $2 == "RX" {
         id = toupper($5)
         if (id ~ /^2/) next
         family = id
-        if (length(id) == 8) family = substr(id, 1, 6) "xx"
+        if (length(id) == 8) family = substr(id, 1, 4) "xxxx"
         count[family]++
         if (!seen[family, id]) {
           if (ids[family] == "") ids[family] = id
           else ids[family] = ids[family] "," id
           seen[family, id] = 1
         }
+        first_byte = toupper($7)
+        second_byte = toupper($8)
+        lid = toupper($11)
+        if (first_byte == "7D" && second_byte == "A8" && length(lid) == 2 && lid ~ /^[0-9A-F]+$/) {
+          lid_key = family SUBSEP lid
+          if (!seen_lid[lid_key]) {
+            lid_label = hex_byte(lid) " (0x" lid ")"
+            if (lids[family] == "") lids[family] = lid_label
+            else lids[family] = lids[family] "," lid_label
+            seen_lid[lid_key] = 1
+          }
+        }
       }
       END {
-        for (family in count) print family "|" count[family] "|" ids[family]
+        for (family in count) {
+          lid_list = lids[family]
+          if (lid_list == "") lid_list = "not decoded"
+          print family "|" count[family] "|" ids[family] "|" lid_list
+        }
       }
     ' "$CAPTURE_FILE" | sort >"$PARTICIPANT_FILE"
     PARTICIPANT_COUNT="$(wc -l <"$PARTICIPANT_FILE" | tr -d ' ')"
-    printf '\n  %s: %s observed RX identifier families\n' "$CAN_INTERFACE" "${PARTICIPANT_COUNT:-0}"
+    printf '\n  %s: %s observed RX participant signatures\n' "$CAN_INTERFACE" "${PARTICIPANT_COUNT:-0}"
     if [ -s "$PARTICIPANT_FILE" ]; then
-      awk -F'|' '{ printf "    family=%-10s frames=%-6s ids=%s\n", $1, $2, $3 }' "$PARTICIPANT_FILE"
+      awk -F'|' '{ printf "    signature=%-10s Bus77 LID candidate=%-14s frames=%-6s ids=%s\n", $1, $4, $2, $3 }' "$PARTICIPANT_FILE"
     else
       printf '    no active RX participants observed\n'
     fi

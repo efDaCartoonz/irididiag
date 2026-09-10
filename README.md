@@ -103,8 +103,8 @@ sh check_can_bus.sh
 
 The diagnostic reports the controller state, bitrate, driver, carrier, CAN
 error-state history, packet and error counter changes, active iRidi Server data
-directory, CAN gateway settings, gateway listeners, and observed RX identifier
-families. Its default passive sample lasts 15 seconds.
+directory, CAN gateway settings, gateway listeners, and observed RX participant
+signatures. Its default passive sample lasts 15 seconds.
 
 Download and run the live monitor:
 
@@ -116,7 +116,7 @@ sh monitor_can_bus.sh
 
 The monitor displays each packet with its interface, RX/TX direction, CAN ID,
 length, and payload. After 60 seconds it prints kernel counter changes and a
-summary of observed RX and TX identifier families.
+summary of observed RX and TX participant signatures.
 
 Optional parameters can select one channel or change the observation time:
 
@@ -126,9 +126,10 @@ sh monitor_can_bus.sh --interface can1 --duration 300
 ```
 
 The participant list is inferred from passively observed RX identifier families.
-It does not perform the proprietary Bus77 discovery procedure, assign addresses,
-or modify devices. Silent devices are therefore not listed, and exact Bus77
-model, LID, and HWID values may require the Bus77 scanner in iRidi Studio or
+Recognized response frames also show Bus77 LID candidates. The scripts do not
+perform the proprietary Bus77 discovery procedure, assign addresses, or modify
+devices. Silent devices are therefore not listed, and exact Bus77 model,
+confirmed LID, and HWID values may require the Bus77 scanner in iRidi Studio or
 Bus77 Home.
 
 ## Cloud diagnostics on Windows
