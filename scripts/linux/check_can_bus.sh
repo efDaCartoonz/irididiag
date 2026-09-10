@@ -67,7 +67,7 @@ fi
 set +e
 export LC_ALL=C
 
-SCRIPT_VERSION=2.1
+SCRIPT_VERSION=2.2
 PASSIVE_ONLY=0
 REQUESTED_INTERFACE=all
 SAMPLE_SECONDS=15
@@ -1056,9 +1056,6 @@ for CAN_INTERFACE in $INTERFACES; do
     warn "$CAN_INTERFACE recorded new errors or dropped frames during the sample."
   fi
 done
-
-separator
-show_bus_devices
 
 separator
 printf 'SUMMARY\n'

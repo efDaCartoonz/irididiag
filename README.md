@@ -101,11 +101,12 @@ wget --no-check-certificate -O check_can_bus.sh https://raw.githubusercontent.co
 sh check_can_bus.sh
 ```
 
-Version 2.1 shows a separate card for each device under `BUS DEVICES`, before
-and after observation. Each card includes model, name, HWID, firmware version
+The short diagnostic (version 2.2) shows device cards once, before bus health.
+The monitor (version 2.1) also repeats them after observation.
+Each `BUS DEVICES` card includes model, name, HWID, firmware version
 and profile. Unavailable discovery data is explicitly reported.
 The download commands replace old scripts instead of creating `.1` copies;
-check `Script version: 2.1` in the report header.
+check `Script version: 2.2` for the short diagnostic in the report header.
 
 The report starts with the responding devices: LID, full HWID, model, device
 name, firmware version and **firmware profile number (Firmware ID)**.
