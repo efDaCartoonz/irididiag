@@ -290,7 +290,8 @@ fi
 
 separator
 printf 'Observed bus composition\n'
-printf '  RX identifier families are passive device candidates, not decoded model names.\n'
+printf '  CAN device ID is decoded from Extended ID bits 28..13.\n'
+printf '  LID candidates come from observed Bus77 headers (not CRC-validated).\n'
 printf '  Silent devices are not visible in a passive capture.\n'
 for CAN_INTERFACE in $INTERFACES; do
   for DIRECTION in RX TX; do
@@ -302,17 +303,27 @@ for CAN_INTERFACE in $INTERFACES; do
       function hex_byte(value) {
         return (hex_digit(substr(value, 1, 1)) * 16) + hex_digit(substr(value, 2, 1))
       }
+      function hex_number(value, position, result) {
+        result = 0
+        for (position = 1; position <= length(value); position++) {
+          result = (result * 16) + hex_digit(substr(value, position, 1))
+        }
+        return result
+      }
       $1 == dev && $2 == direction {
         id = toupper($5)
-        if (id ~ /^2/) next
-        family = id
-        if (length(id) == 8) family = substr(id, 1, 4) "xxxx"
+        if (length(id) != 8 || id !~ /^[01][0-9A-F]+$/) next
+        ext_id = hex_number(id)
+        family = sprintf("%04X", int(ext_id / 8192) % 65536)
         count[family]++
         seen[family, id] = 1
-        first_byte = toupper($7)
-        second_byte = toupper($8)
-        lid = toupper($11)
-        if (direction == "RX" && first_byte == "7D" && second_byte == "A8" && length(lid) == 2 && lid ~ /^[0-9A-F]+$/) {
+        marker = toupper($7)
+        header_flags = hex_byte(toupper($8))
+        source_field = 10
+        if (int(header_flags / 128) % 2) source_field++
+        if (int(header_flags / 64) % 2) source_field++
+        lid = toupper($(source_field))
+        if (marker ~ /^(75|7D|F5|FD)$/ && length(lid) == 2 && lid ~ /^[0-9A-F]+$/) {
           seen_lid[family, lid] = 1
         }
       }
@@ -341,9 +352,9 @@ for CAN_INTERFACE in $INTERFACES; do
       }
     ' "$CAPTURE_FILE" | sort >"$FAMILY_FILE"
     FAMILY_COUNT="$(wc -l <"$FAMILY_FILE" | tr -d ' ')"
-    printf '\n  %s %s: %s participant signatures\n' "$CAN_INTERFACE" "$DIRECTION" "${FAMILY_COUNT:-0}"
+    printf '\n  %s %s: %s CAN device IDs\n' "$CAN_INTERFACE" "$DIRECTION" "${FAMILY_COUNT:-0}"
     if [ -s "$FAMILY_FILE" ]; then
-      awk -F'|' '{ printf "    signature=%-10s Bus77 LID candidate=%-14s frames=%-6s ids=%s\n", $1, $4, $2, $3 }' "$FAMILY_FILE"
+      awk -F'|' '{ printf "    CAN device ID=0x%-6s Bus77 LID candidate=%-14s frames=%-6s extended_ids=%s\n", $1, $4, $2, $3 }' "$FAMILY_FILE"
     else
       printf '    none observed\n'
     fi

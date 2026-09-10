@@ -419,7 +419,8 @@ done
 
 separator
 printf '4. Observed bus participants\n'
-printf '  Device candidates are grouped from received CAN identifier families.\n'
+printf '  CAN device ID is decoded from Extended ID bits 28..13.\n'
+printf '  LID candidates come from observed Bus77 headers (not CRC-validated).\n'
 printf '  Silent devices and exact model/HWID values cannot be discovered passively.\n'
 if [ ! -s "$CAPTURE_FILE" ]; then
   printf '  No captured frames are available.\n'
@@ -433,21 +434,31 @@ else
       function hex_byte(value) {
         return (hex_digit(substr(value, 1, 1)) * 16) + hex_digit(substr(value, 2, 1))
       }
+      function hex_number(value, position, result) {
+        result = 0
+        for (position = 1; position <= length(value); position++) {
+          result = (result * 16) + hex_digit(substr(value, position, 1))
+        }
+        return result
+      }
       $1 == dev && $2 == "RX" {
         id = toupper($5)
-        if (id ~ /^2/) next
-        family = id
-        if (length(id) == 8) family = substr(id, 1, 4) "xxxx"
+        if (length(id) != 8 || id !~ /^[01][0-9A-F]+$/) next
+        ext_id = hex_number(id)
+        family = sprintf("%04X", int(ext_id / 8192) % 65536)
         count[family]++
         if (!seen[family, id]) {
           if (ids[family] == "") ids[family] = id
           else ids[family] = ids[family] "," id
           seen[family, id] = 1
         }
-        first_byte = toupper($7)
-        second_byte = toupper($8)
-        lid = toupper($11)
-        if (first_byte == "7D" && second_byte == "A8" && length(lid) == 2 && lid ~ /^[0-9A-F]+$/) {
+        marker = toupper($7)
+        header_flags = hex_byte(toupper($8))
+        source_field = 10
+        if (int(header_flags / 128) % 2) source_field++
+        if (int(header_flags / 64) % 2) source_field++
+        lid = toupper($(source_field))
+        if (marker ~ /^(75|7D|F5|FD)$/ && length(lid) == 2 && lid ~ /^[0-9A-F]+$/) {
           lid_key = family SUBSEP lid
           if (!seen_lid[lid_key]) {
             lid_label = hex_byte(lid) " (0x" lid ")"
@@ -466,9 +477,9 @@ else
       }
     ' "$CAPTURE_FILE" | sort >"$PARTICIPANT_FILE"
     PARTICIPANT_COUNT="$(wc -l <"$PARTICIPANT_FILE" | tr -d ' ')"
-    printf '\n  %s: %s observed RX participant signatures\n' "$CAN_INTERFACE" "${PARTICIPANT_COUNT:-0}"
+    printf '\n  %s: %s observed RX CAN device IDs\n' "$CAN_INTERFACE" "${PARTICIPANT_COUNT:-0}"
     if [ -s "$PARTICIPANT_FILE" ]; then
-      awk -F'|' '{ printf "    signature=%-10s Bus77 LID candidate=%-14s frames=%-6s ids=%s\n", $1, $4, $2, $3 }' "$PARTICIPANT_FILE"
+      awk -F'|' '{ printf "    CAN device ID=0x%-6s Bus77 LID candidate=%-14s frames=%-6s extended_ids=%s\n", $1, $4, $2, $3 }' "$PARTICIPANT_FILE"
     else
       printf '    no active RX participants observed\n'
     fi

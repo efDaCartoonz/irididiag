@@ -22,6 +22,7 @@ Windows PowerShell versions found on Windows 7, 10, and 11.
 | `check_emmc_health.sh` | eMMC health, root write path, overlay, and kernel error diagnostics |
 | `check_can_bus.sh` | CAN/Bus77 interface health, counters, gateway settings, and observed participants |
 | `monitor_can_bus.sh` | Live passive CAN/Bus77 packet monitor with RX/TX and bus composition summaries |
+| `scan_bus77_devices.sh` | Read-only active Bus77 discovery with model, HWID, firmware, and channel counts |
 
 ### Windows
 
@@ -88,7 +89,7 @@ otherwise, a detected session may belong to different software.
 
 ## CAN/Bus77 diagnostics on HSS and ProAV
 
-Both CAN tools are passive: they never send CAN frames and never change the
+The check and monitor tools are passive: they never send CAN frames and never change the
 interface configuration. By default, they automatically detect and inspect all
 SocketCAN interfaces, including both channels on platforms that provide `can0`
 and `can1`.
@@ -125,12 +126,33 @@ sh check_can_bus.sh --interface can0 --duration 30
 sh monitor_can_bus.sh --interface can1 --duration 300
 ```
 
-The participant list is inferred from passively observed RX identifier families.
-Recognized response frames also show Bus77 LID candidates. The scripts do not
-perform the proprietary Bus77 discovery procedure, assign addresses, or modify
-devices. Silent devices are therefore not listed, and exact Bus77 model,
-confirmed LID, and HWID values may require the Bus77 scanner in iRidi Studio or
-Bus77 Home.
+Passive reports decode the 16-bit CAN device ID from Extended ID bits 28..13 and
+source LID candidates from apparent Bus77 packet headers, without CRC validation.
+Use the active scanner to verify device identities. Silent devices are not visible and
+their model or full HWID is not requested.
+
+To request a read-only Bus77 inventory, download and run the active scanner:
+
+```sh
+cd /tmp
+wget --no-check-certificate https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/linux/scan_bus77_devices.sh
+sh scan_bus77_devices.sh
+```
+
+The scanner sends one System Search request and one Device Info request per
+discovered LID. It validates CRC16 and reports device name, producer, model,
+full HWID, CAN device ID, firmware ID and version, and channel/tag counts. It
+does not send address assignment, identification LED, channel control, or
+firmware commands.
+
+Run only one scanner at a time. It uses CAN ID `0xFFFE` and LID `254` and stops
+if this identity is observed in its initial sample. Silent address conflicts
+cannot be ruled out. The default interface is `can0`; use `--interface can1`
+to select another channel and `--timeout 10` for a longer response window.
+Only responding devices are listed; an incomplete profile produces `WARN`.
+Responses are reassembled, CRC-checked and matched to the discovered CAN ID,
+LID and HWID, including devices that omit the optional transaction ID.
+Protocol reference: [official BUS77 SDK](https://github.com/iRidium-Mobile/BUS77-SDK).
 
 ## Cloud diagnostics on Windows
 
