@@ -70,7 +70,7 @@ fi
 set +e
 export LC_ALL=C
 
-SCRIPT_VERSION=2.0
+SCRIPT_VERSION=2.1
 PASSIVE_ONLY=0
 REQUESTED_INTERFACE=all
 MONITOR_SECONDS=60
@@ -672,6 +672,29 @@ exit 0
 )
 # END GENERATED INVENTORY
 
+# BEGIN GENERATED CARDS
+show_bus_devices() {
+  awk '
+BEGIN { FS="|"; print "BUS DEVICES - verified identity data from this run" }
+NF >= 9 {
+    printf "\n  DEVICE %d | %s | LID %s\n", ++count, $1, $2
+    print "  ------------------------------------------------------------"
+    printf "  Model             : %s\n", ($6!=""?$6:"not reported")
+    printf "  Device name       : %s\n", ($4!=""?$4:"not reported")
+    printf "  HWID              : %s\n", ($7!=""?$7:"not reported")
+    printf "  Firmware version  : %s\n", ($9!=""?$9:"not reported")
+    printf "  Firmware profile  : %s (Firmware ID)\n", ($8!=""?$8:"not reported")
+    printf "  CAN device ID     : 0x%s\n", $3
+}
+END {
+    printf "\n  Devices with verified details: %d\n", count
+    if(!count) print "  [ATTENTION] Device details are unavailable, not an empty-bus diagnosis.\n  Check the discovery messages above; --passive does not request identities."
+    print "  Only devices that replied with valid identity data are included."
+}
+' "$INVENTORY_FILE"
+}
+# END GENERATED CARDS
+
 # BEGIN GENERATED DECODER
 decode_bus77_traffic() {
   awk -v inventory="$INVENTORY_FILE" -v status="$WORK_DIR/decoder.status" '
@@ -983,7 +1006,7 @@ elif [ "$FAILURES" -eq 0 ]; then
     INVENTORY_RC=$?
     if [ -s "$WORK_DIR/device.rows" ]; then
       awk -F'|' -v dev="$INVENTORY_INTERFACE" '{print dev "|" $0}' "$WORK_DIR/device.rows" >>"$INVENTORY_FILE"
-      awk -F'|' '{printf "  LID %-3s %-24s name=%s | firmware=%s profile=%s\n",$1,$5,$3,$8,$7}' "$WORK_DIR/device.rows"
+
     fi
     if [ "$INVENTORY_RC" -ne 0 ]; then
       warn "$INVENTORY_INTERFACE directory is incomplete; unknown devices will retain their bus addresses."
@@ -993,6 +1016,8 @@ elif [ "$FAILURES" -eq 0 ]; then
   done
 fi
 
+separator
+show_bus_devices
 separator
 printf 'Live packet exchange\n'
 printf '  TIME | CAN | RX/TX | SENDER -> RECEIVER | COMMAND | CHANNEL/VARIABLE/VALUE\n'
@@ -1070,77 +1095,7 @@ if [ "$TOTAL_ERROR_CAPTURED" -gt 0 ]; then
 fi
 
 separator
-printf 'Observed bus composition\n'
-printf '  CAN device ID is decoded from Extended ID bits 28..13.\n'
-printf '  LID candidates come from observed Bus77 headers (not CRC-validated).\n'
-printf '  Silent devices are not visible in a passive capture.\n'
-for CAN_INTERFACE in $INTERFACES; do
-  for DIRECTION in RX TX; do
-    FAMILY_FILE="$WORK_DIR/$CAN_INTERFACE.$DIRECTION.families"
-    awk -v dev="$CAN_INTERFACE" -v direction="$DIRECTION" '
-      function hex_digit(value) {
-        return index("0123456789ABCDEF", value) - 1
-      }
-      function hex_byte(value) {
-        return (hex_digit(substr(value, 1, 1)) * 16) + hex_digit(substr(value, 2, 1))
-      }
-      function hex_number(value, position, result) {
-        result = 0
-        for (position = 1; position <= length(value); position++) {
-          result = (result * 16) + hex_digit(substr(value, position, 1))
-        }
-        return result
-      }
-      $1 == dev && $2 == direction {
-        id = toupper($5)
-        if (length(id) != 8 || id !~ /^[01][0-9A-F]+$/) next
-        ext_id = hex_number(id)
-        family = sprintf("%04X", int(ext_id / 8192) % 65536)
-        count[family]++
-        seen[family, id] = 1
-        marker = toupper($7)
-        header_flags = hex_byte(toupper($8))
-        source_field = 10
-        if (int(header_flags / 128) % 2) source_field++
-        if (int(header_flags / 64) % 2) source_field++
-        lid = toupper($(source_field))
-        if (marker ~ /^(75|7D|F5|FD)$/ && length(lid) == 2 && lid ~ /^[0-9A-F]+$/) {
-          seen_lid[family, lid] = 1
-        }
-      }
-      END {
-        for (family in count) {
-          ids = ""
-          lids = ""
-          for (key in seen) {
-            split(key, parts, SUBSEP)
-            if (parts[1] == family) {
-              if (ids == "") ids = parts[2]
-              else ids = ids "," parts[2]
-            }
-          }
-          for (lid_key in seen_lid) {
-            split(lid_key, lid_parts, SUBSEP)
-            if (lid_parts[1] == family) {
-              lid_label = hex_byte(lid_parts[2]) " (0x" lid_parts[2] ")"
-              if (lids == "") lids = lid_label
-              else lids = lids "," lid_label
-            }
-          }
-          if (lids == "") lids = "not decoded"
-          print family "|" count[family] "|" ids "|" lids
-        }
-      }
-    ' "$CAPTURE_FILE" | sort >"$FAMILY_FILE"
-    FAMILY_COUNT="$(wc -l <"$FAMILY_FILE" | tr -d ' ')"
-    printf '\n  %s %s: %s CAN device IDs\n' "$CAN_INTERFACE" "$DIRECTION" "${FAMILY_COUNT:-0}"
-    if [ -s "$FAMILY_FILE" ]; then
-      awk -F'|' '{ printf "    CAN device ID=0x%-6s Bus77 LID candidate=%-14s frames=%-6s extended_ids=%s\n", $1, $4, $2, $3 }' "$FAMILY_FILE"
-    else
-      printf '    none observed\n'
-    fi
-  done
-done
+show_bus_devices
 
 separator
 printf 'SUMMARY\n'

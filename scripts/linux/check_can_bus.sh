@@ -67,7 +67,7 @@ fi
 set +e
 export LC_ALL=C
 
-SCRIPT_VERSION=2.0
+SCRIPT_VERSION=2.1
 PASSIVE_ONLY=0
 REQUESTED_INTERFACE=all
 SAMPLE_SECONDS=15
@@ -669,6 +669,29 @@ exit 0
 )
 # END GENERATED INVENTORY
 
+# BEGIN GENERATED CARDS
+show_bus_devices() {
+  awk '
+BEGIN { FS="|"; print "BUS DEVICES - verified identity data from this run" }
+NF >= 9 {
+    printf "\n  DEVICE %d | %s | LID %s\n", ++count, $1, $2
+    print "  ------------------------------------------------------------"
+    printf "  Model             : %s\n", ($6!=""?$6:"not reported")
+    printf "  Device name       : %s\n", ($4!=""?$4:"not reported")
+    printf "  HWID              : %s\n", ($7!=""?$7:"not reported")
+    printf "  Firmware version  : %s\n", ($9!=""?$9:"not reported")
+    printf "  Firmware profile  : %s (Firmware ID)\n", ($8!=""?$8:"not reported")
+    printf "  CAN device ID     : 0x%s\n", $3
+}
+END {
+    printf "\n  Devices with verified details: %d\n", count
+    if(!count) print "  [ATTENTION] Device details are unavailable, not an empty-bus diagnosis.\n  Check the discovery messages above; --passive does not request identities."
+    print "  Only devices that replied with valid identity data are included."
+}
+' "$INVENTORY_FILE"
+}
+# END GENERATED CARDS
+
 cleanup() {
   if [ -n "$CAPTURE_PID" ]; then
     kill -INT "$CAPTURE_PID" 2>/dev/null
@@ -733,6 +756,8 @@ if [ -z "$WORK_DIR" ] || [ ! -d "$WORK_DIR" ]; then
   mkdir -m 700 "$WORK_DIR" || { WORK_DIR=""; exit 2; }
 fi
 CAPTURE_FILE="$WORK_DIR/capture.txt"
+INVENTORY_FILE="$WORK_DIR/inventory.txt"
+: >"$INVENTORY_FILE"
 
 detect_interfaces() {
   for CAN_PATH in /sys/class/net/*; do
@@ -768,9 +793,13 @@ if [ "$PASSIVE_ONLY" -eq 1 ]; then
 else
   for INVENTORY_INTERFACE in $INTERFACES; do
     printf '  %s: reading device identities and firmware profiles...\n' "$INVENTORY_INTERFACE"
-    run_bus77_inventory --interface "$INVENTORY_INTERFACE" >"$WORK_DIR/inventory.report" 2>&1
+    : >"$WORK_DIR/device.rows"
+    IRIDI_BUS77_INVENTORY_FILE="$WORK_DIR/device.rows" run_bus77_inventory --interface "$INVENTORY_INTERFACE" >"$WORK_DIR/inventory.report" 2>&1
     INVENTORY_RC=$?
-    awk '/^3\. Device information/ {show=1; sub(/^3\. /,"")} /^SUMMARY/ {show=0} show || /\[NOT OK\]/ || /^  (Discovered devices|Complete profiles):/ {print} /^RESULT:/ {sub(/^RESULT:/,"Inventory result:"); print}' "$WORK_DIR/inventory.report"
+    if [ -s "$WORK_DIR/device.rows" ]; then
+      awk -v dev="$INVENTORY_INTERFACE" '{print dev "|" $0}' "$WORK_DIR/device.rows" >>"$INVENTORY_FILE"
+    fi
+    awk '/\\[NOT OK\\]/ || /\\[ATTENTION\\]/ {print} /^RESULT:/ {sub(/^RESULT:/,"Inventory result:");print}' "$WORK_DIR/inventory.report"
     if [ "$INVENTORY_RC" -ne 0 ]; then
       printf '  Search identities (some detailed profiles may be missing):\n'
       awk '/LID.*CAN ID.*HWID/ {show=1} /^---/ {show=0} show {print}' "$WORK_DIR/inventory.report"
@@ -783,6 +812,8 @@ else
   done
 fi
 
+separator
+show_bus_devices
 separator
 printf 'BUS HEALTH\n'
 printf '1. CAN interface discovery\n'
@@ -1027,73 +1058,7 @@ for CAN_INTERFACE in $INTERFACES; do
 done
 
 separator
-printf '4. Observed bus participants\n'
-printf '  CAN device ID is decoded from Extended ID bits 28..13.\n'
-printf '  LID candidates come from observed Bus77 headers (not CRC-validated).\n'
-printf '  Silent devices and exact model/HWID values cannot be discovered passively.\n'
-if [ ! -s "$CAPTURE_FILE" ]; then
-  printf '  No captured frames are available.\n'
-else
-  for CAN_INTERFACE in $INTERFACES; do
-    PARTICIPANT_FILE="$WORK_DIR/$CAN_INTERFACE.participants"
-    awk -v dev="$CAN_INTERFACE" '
-      function hex_digit(value) {
-        return index("0123456789ABCDEF", value) - 1
-      }
-      function hex_byte(value) {
-        return (hex_digit(substr(value, 1, 1)) * 16) + hex_digit(substr(value, 2, 1))
-      }
-      function hex_number(value, position, result) {
-        result = 0
-        for (position = 1; position <= length(value); position++) {
-          result = (result * 16) + hex_digit(substr(value, position, 1))
-        }
-        return result
-      }
-      $1 == dev && $2 == "RX" {
-        id = toupper($5)
-        if (length(id) != 8 || id !~ /^[01][0-9A-F]+$/) next
-        ext_id = hex_number(id)
-        family = sprintf("%04X", int(ext_id / 8192) % 65536)
-        count[family]++
-        if (!seen[family, id]) {
-          if (ids[family] == "") ids[family] = id
-          else ids[family] = ids[family] "," id
-          seen[family, id] = 1
-        }
-        marker = toupper($7)
-        header_flags = hex_byte(toupper($8))
-        source_field = 10
-        if (int(header_flags / 128) % 2) source_field++
-        if (int(header_flags / 64) % 2) source_field++
-        lid = toupper($(source_field))
-        if (marker ~ /^(75|7D|F5|FD)$/ && length(lid) == 2 && lid ~ /^[0-9A-F]+$/) {
-          lid_key = family SUBSEP lid
-          if (!seen_lid[lid_key]) {
-            lid_label = hex_byte(lid) " (0x" lid ")"
-            if (lids[family] == "") lids[family] = lid_label
-            else lids[family] = lids[family] "," lid_label
-            seen_lid[lid_key] = 1
-          }
-        }
-      }
-      END {
-        for (family in count) {
-          lid_list = lids[family]
-          if (lid_list == "") lid_list = "not decoded"
-          print family "|" count[family] "|" ids[family] "|" lid_list
-        }
-      }
-    ' "$CAPTURE_FILE" | sort >"$PARTICIPANT_FILE"
-    PARTICIPANT_COUNT="$(wc -l <"$PARTICIPANT_FILE" | tr -d ' ')"
-    printf '\n  %s: %s observed RX CAN device IDs\n' "$CAN_INTERFACE" "${PARTICIPANT_COUNT:-0}"
-    if [ -s "$PARTICIPANT_FILE" ]; then
-      awk -F'|' '{ printf "    CAN device ID=0x%-6s Bus77 LID candidate=%-14s frames=%-6s extended_ids=%s\n", $1, $4, $2, $3 }' "$PARTICIPANT_FILE"
-    else
-      printf '    no active RX participants observed\n'
-    fi
-  done
-fi
+show_bus_devices
 
 separator
 printf 'SUMMARY\n'

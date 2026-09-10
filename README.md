@@ -97,9 +97,15 @@ when the server already provides `ip`, `candump`, `cansend` and BusyBox awk.
 
 ```sh
 cd /tmp
-wget --no-check-certificate https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/linux/check_can_bus.sh
+wget --no-check-certificate -O check_can_bus.sh https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/linux/check_can_bus.sh &&
 sh check_can_bus.sh
 ```
+
+Version 2.1 shows a separate card for each device under `BUS DEVICES`, before
+and after observation. Each card includes model, name, HWID, firmware version
+and profile. Unavailable discovery data is explicitly reported.
+The download commands replace old scripts instead of creating `.1` copies;
+check `Script version: 2.1` in the report header.
 
 The report starts with the responding devices: LID, full HWID, model, device
 name, firmware version and **firmware profile number (Firmware ID)**.
@@ -111,7 +117,7 @@ The health observation lasts 15 seconds, after discovery has finished.
 
 ```sh
 cd /tmp
-wget --no-check-certificate https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/linux/monitor_can_bus.sh
+wget --no-check-certificate -O monitor_can_bus.sh https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/linux/monitor_can_bus.sh &&
 sh monitor_can_bus.sh
 ```
 
