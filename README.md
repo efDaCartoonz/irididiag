@@ -19,6 +19,7 @@ Windows PowerShell versions found on Windows 7, 10, and 11.
 | `check_bus77_lite.sh` | Application-level checks for Bus77 Lite cloud resources |
 | `check_iridi_pro_ru.sh` | iRidi Pro Cloud checks for the RU region |
 | `check_iridi_pro_eu.sh` | iRidi Pro Cloud checks for the EU region |
+| `check_iridi_pro_cn.sh` | iRidi Pro Cloud checks for the CN region |
 | `check_emmc_health.sh` | eMMC health, root write path, overlay, and kernel error diagnostics |
 | `check_can_bus.sh` | Device inventory (HWID, model, name, firmware/profile), then CAN health |
 | `monitor_can_bus.sh` | Named sender-to-receiver Bus77 messages, commands, values and route summaries |
@@ -81,6 +82,7 @@ sh check_i3knx.sh
 sh check_bus77_lite.sh
 sh check_iridi_pro_ru.sh
 sh check_iridi_pro_eu.sh
+sh check_iridi_pro_cn.sh
 ```
 
 Cloud Gate is evaluated from an active `iridium` process session on the Linux

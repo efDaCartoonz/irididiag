@@ -1,0 +1,289 @@
+#!/bin/sh
+
+# Standalone iRidi Pro cloud diagnostic for the CN region.
+# Usage: sh check_iridi_pro_cn.sh
+
+# Live output and automatic per-run log for POSIX sh and BusyBox.
+if [ "${IRIDI_CLOUD_LOG_ACTIVE:-0}" != "1" ]; then
+  CURRENT_DIRECTORY="$(pwd 2>/dev/null || printf '.')"
+  LOG_DIRECTORY="${IRIDI_DIAG_LOG_DIR:-$CURRENT_DIRECTORY}"
+  if [ ! -d "$LOG_DIRECTORY" ] || [ ! -w "$LOG_DIRECTORY" ]; then
+    LOG_DIRECTORY="${TMPDIR:-/tmp}"
+  fi
+  SCRIPT_BASENAME="${0##*/}"
+  TOOL_SLUG="${SCRIPT_BASENAME%.sh}"
+  TOOL_SLUG="${TOOL_SLUG#check_}"
+  TOOL_SLUG="$(printf '%s' "$TOOL_SLUG" | tr -c 'A-Za-z0-9._-' '_')"
+  HOST_LABEL="$(hostname 2>/dev/null || printf server)"
+  HOST_LABEL="$(printf '%s' "$HOST_LABEL" | tr -c 'A-Za-z0-9._-' '_')"
+  LOG_TIMESTAMP="$(date '+%Y%m%d_%H%M%S' 2>/dev/null || printf unknown_time)"
+  LOG_FILE="$LOG_DIRECTORY/cloud_${TOOL_SLUG}_${HOST_LABEL}_${LOG_TIMESTAMP}_$$.log"
+  export IRIDI_CLOUD_LOG_ACTIVE=1
+  export IRIDI_CLOUD_LOG_FILE="$LOG_FILE"
+
+  colorize_output() {
+    awk '
+      /\[OK\]|RESULT: PASS/ { printf "\033[32m%s\033[0m\n", $0; next }
+      /\[ATTENTION\]|RESULT: WARN/ { printf "\033[33m%s\033[0m\n", $0; next }
+      /\[NOT OK\]|RESULT: FAIL/ { printf "\033[31m%s\033[0m\n", $0; next }
+      { print }
+    '
+  }
+
+  if command -v tee >/dev/null 2>&1; then
+    if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && command -v awk >/dev/null 2>&1; then
+      sh "$0" "$@" 2>&1 | tee "$LOG_FILE" | colorize_output
+    else
+      sh "$0" "$@" 2>&1 | tee "$LOG_FILE"
+    fi
+    PIPELINE_RC=$?
+    RESULT_LINE="$(grep '^RESULT:' "$LOG_FILE" 2>/dev/null | tail -n 1)"
+    case "$RESULT_LINE" in
+      *PASS*) FINAL_RC=0 ;;
+      *WARN*) FINAL_RC=1 ;;
+      *FAIL*) FINAL_RC=2 ;;
+      *) FINAL_RC=2 ;;
+    esac
+    if [ "$PIPELINE_RC" -ne 0 ]; then
+      FINAL_RC=2
+      printf '[NOT OK] The log file could not be written completely.\n'
+    fi
+    printf '\nLog saved: %s\n' "$LOG_FILE" | tee -a "$LOG_FILE"
+    exit "$FINAL_RC"
+  fi
+
+  sh "$0" "$@" >"$LOG_FILE" 2>&1
+  FINAL_RC=$?
+  cat "$LOG_FILE"
+  printf '\nLog saved: %s\n' "$LOG_FILE"
+  exit "$FINAL_RC"
+fi
+
+set +e
+export LC_ALL=C
+
+TOOL_VERSION=1.3
+
+REGION="CN"
+GATE_HOST="37.27.5.98"
+MAX_ATTEMPTS=3
+RETRY_DELAY=1
+TOTAL=0
+OK_COUNT=0
+FAIL_COUNT=0
+WARN_COUNT=0
+GATE_STATUS="not checked"
+
+WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/iridi-pro-cn.XXXXXX" 2>/dev/null)"
+if [ -z "$WORK_DIR" ] || [ ! -d "$WORK_DIR" ]; then
+  WORK_DIR="${TMPDIR:-/tmp}/iridi-pro-cn.$$"
+  mkdir -p "$WORK_DIR" || exit 2
+fi
+trap 'rm -rf "$WORK_DIR"' EXIT HUP INT TERM
+
+separator() {
+  printf '%s\n' '----------------------------------------------------------------'
+}
+
+resolve_host() {
+  RESOLVED_IP=""
+  if command -v getent >/dev/null 2>&1; then
+    RESOLVED_IP="$(getent ahostsv4 "$1" 2>/dev/null | awk 'NR==1 {print $1; exit}')"
+  fi
+  if [ -z "$RESOLVED_IP" ] && command -v nslookup >/dev/null 2>&1; then
+    RESOLVED_IP="$(nslookup "$1" 2>/dev/null | awk '
+      /^Address [0-9]+: / {ip=$3}
+      /^Address: / {ip=$2}
+      END {sub(/#.*/, "", ip); print ip}
+    ')"
+  fi
+}
+
+probe_resource() {
+  RESOURCE_ID="$1"
+  RESOURCE_LABEL="$2"
+  RESOURCE_URL="$3"
+  EXPECTED_IP="$4"
+  FOLLOW_REDIRECTS="$5"
+  TOTAL=$((TOTAL + 1))
+
+  BODY_FILE="$WORK_DIR/$RESOURCE_ID.body"
+  HEADER_FILE="$WORK_DIR/$RESOURCE_ID.headers"
+  ERROR_FILE="$WORK_DIR/$RESOURCE_ID.error"
+  RESOURCE_HOST="${RESOURCE_URL#*://}"
+  RESOURCE_HOST="${RESOURCE_HOST%%/*}"
+  RESOURCE_HOST="${RESOURCE_HOST%%:*}"
+  resolve_host "$RESOURCE_HOST"
+
+  ATTEMPT=1
+  while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+    rm -f "$BODY_FILE" "$HEADER_FILE" "$ERROR_FILE"
+    HTTP_CODE=0
+    REMOTE_IP=""
+    CONTENT_TYPE=""
+    BODY_SIZE=0
+    ELAPSED="n/a"
+    CLIENT="none"
+    CLIENT_RC=127
+    HTTP_RECEIVED=no
+
+    if command -v curl >/dev/null 2>&1; then
+      CLIENT="curl"
+      REDIRECT_ARGS="--max-redirs 0"
+      [ "$FOLLOW_REDIRECTS" = "yes" ] && REDIRECT_ARGS="--location --max-redirs 3"
+      META="$(curl --insecure $REDIRECT_ARGS --connect-timeout 6 --max-time 15 \
+        --silent --show-error --header 'Accept: application/json, text/plain, */*' \
+        --user-agent 'iridi-pro-cloud-check/1.1' --output "$BODY_FILE" \
+        --write-out '%{http_code}|%{remote_ip}|%{content_type}|%{size_download}|%{time_total}' \
+        "$RESOURCE_URL" 2>"$ERROR_FILE")"
+      CLIENT_RC=$?
+      OLD_IFS=$IFS
+      IFS='|'
+      set -- $META
+      IFS=$OLD_IFS
+      HTTP_CODE="${1:-0}"
+      REMOTE_IP="${2:-}"
+      CONTENT_TYPE="${3:-}"
+      BODY_SIZE="${4:-0}"
+      ELAPSED="${5:-n/a} s"
+    elif command -v wget >/dev/null 2>&1; then
+      CLIENT="wget"
+      WGET_REDIRECT="--max-redirect=0"
+      [ "$FOLLOW_REDIRECTS" = "yes" ] && WGET_REDIRECT="--max-redirect=3"
+      WGET_TLS=""
+      wget --help 2>&1 | grep -q -e '--no-check-certificate' && WGET_TLS="--no-check-certificate"
+      wget $WGET_TLS $WGET_REDIRECT -T 15 -t 1 -S -O "$BODY_FILE" \
+        --header='Accept: application/json, text/plain, */*' \
+        --user-agent='iridi-pro-cloud-check/1.1' "$RESOURCE_URL" \
+        2>"$HEADER_FILE"
+      CLIENT_RC=$?
+      HTTP_CODE="$(awk '/^[[:space:]]*HTTP\/[0-9.]+ [0-9][0-9][0-9]/{code=$2} END{print code+0}' "$HEADER_FILE")"
+      CONTENT_TYPE="$(awk -F': ' 'tolower($1) ~ /content-type/{value=$2} END{gsub(/\r/, "", value); print value}' "$HEADER_FILE")"
+      REMOTE_IP="$(sed -n 's/.*Connecting to [^ ]* (\([^):]*\).*/\1/p' "$HEADER_FILE" | head -n 1)"
+      [ -f "$BODY_FILE" ] && BODY_SIZE="$(wc -c <"$BODY_FILE" | tr -d ' ')"
+    else
+      break
+    fi
+
+    case "$HTTP_CODE" in
+      2??|3??|4??|5??) HTTP_RECEIVED=yes ;;
+    esac
+    [ "$HTTP_RECEIVED" = "yes" ] && break
+    [ "$ATTEMPT" -ge "$MAX_ATTEMPTS" ] && break
+    sleep "$RETRY_DELAY"
+    ATTEMPT=$((ATTEMPT + 1))
+  done
+
+  case "$HTTP_CODE" in
+    2??|3??|4??) AVAILABLE=yes ;;
+    *) AVAILABLE=no ;;
+  esac
+  [ "$AVAILABLE" = "yes" ] && [ -z "$REMOTE_IP" ] && REMOTE_IP="$RESOLVED_IP"
+
+  separator
+  printf '%s\n' "$RESOURCE_LABEL"
+  printf '  URL:              %s\n' "$RESOURCE_URL"
+  printf '  DNS:              %s -> %s\n' "$RESOURCE_HOST" "${RESOLVED_IP:-not resolved}"
+  printf '  Documented IP:    %s\n' "$EXPECTED_IP"
+  printf '  Actual IP:        %s\n' "${REMOTE_IP:-not detected}"
+  printf '  HTTP client:      %s\n' "$CLIENT"
+  printf '  Attempt:          %s of %s\n' "$ATTEMPT" "$MAX_ATTEMPTS"
+  printf '  HTTP response:    %s\n' "${HTTP_CODE:-0}"
+  printf '  Content-Type:     %s\n' "${CONTENT_TYPE:-not provided}"
+  printf '  Payload:          %s bytes\n' "${BODY_SIZE:-0}"
+  [ "$ELAPSED" != "n/a" ] && printf '  Request time:     %s\n' "$ELAPSED"
+
+  if [ "$EXPECTED_IP" != "dynamic" ] && [ -n "$REMOTE_IP" ] && [ "$REMOTE_IP" != "$EXPECTED_IP" ]; then
+    printf '  [ATTENTION] The actual IP differs from the documented IP (a CDN, proxy, or gateway may be in use).\n'
+    WARN_COUNT=$((WARN_COUNT + 1))
+  fi
+
+  if [ "$AVAILABLE" = "yes" ]; then
+    if [ "$ATTEMPT" -gt 1 ]; then
+      printf '  [ATTENTION] A response was received after a retry; the connection may be unstable.\n'
+      WARN_COUNT=$((WARN_COUNT + 1))
+    fi
+    printf '  [OK] The resource is reachable and returned an application-level HTTP response.\n'
+    OK_COUNT=$((OK_COUNT + 1))
+  else
+    case "$HTTP_CODE" in
+      5??) printf '  [NOT OK] The resource returned HTTP %s.\n' "$HTTP_CODE" ;;
+      *) printf '  [NOT OK] No application-level HTTP response was received after %s attempts (client exit code %s).\n' "$ATTEMPT" "$CLIENT_RC" ;;
+    esac
+    if [ -s "$ERROR_FILE" ]; then
+      printf '  Error: '
+      tail -n 2 "$ERROR_FILE" | tr '\n' ' '
+      printf '\n'
+    elif [ -s "$HEADER_FILE" ]; then
+      printf '  Error: '
+      tail -n 2 "$HEADER_FILE" | tr '\n' ' '
+      printf '\n'
+    fi
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+  fi
+}
+
+check_gate() {
+  GATE_OUTPUT=""
+  if command -v ss >/dev/null 2>&1; then
+    GATE_OUTPUT="$(ss -ntp 2>/dev/null)"
+  elif command -v netstat >/dev/null 2>&1; then
+    GATE_OUTPUT="$(netstat -ntp 2>/dev/null)"
+  elif command -v busybox >/dev/null 2>&1 && busybox --list 2>/dev/null | grep -qx netstat; then
+    GATE_OUTPUT="$(busybox netstat -ntp 2>/dev/null)"
+  fi
+  GATE_LINE="$(printf '%s\n' "$GATE_OUTPUT" | grep -E "$GATE_HOST:(9088|9089)" | head -n 1)"
+  separator
+  printf 'Cloud Gate CN: %s, ports 9088/9089\n' "$GATE_HOST"
+  if [ -n "$GATE_LINE" ]; then
+    GATE_STATUS="active connection found"
+    printf '  [OK] An active connection was found.\n'
+    printf '  %s\n' "$GATE_LINE"
+  else
+    GATE_STATUS="no active connection found"
+    printf '  [ATTENTION] No active connection was found. This does not invalidate the HTTP checks.\n'
+    WARN_COUNT=$((WARN_COUNT + 1))
+  fi
+}
+
+printf 'iRidi Pro Cloud Check - region %s\n' "$REGION"
+printf 'Tool version: %s\n' "$TOOL_VERSION"
+printf 'Started: %s\n' "$(date 2>/dev/null || echo unknown)"
+printf 'Log file: %s\n' "${IRIDI_CLOUD_LOG_FILE:-not set}"
+printf 'Device: %s | %s | %s\n' "$(hostname 2>/dev/null || echo unknown)" "$(uname -s 2>/dev/null)" "$(uname -m 2>/dev/null)"
+printf 'Method: DNS + real HTTP(S) GET + response and payload analysis\n'
+
+probe_resource auth-cn "Authorization CN" "https://auth.eu.iridi.com/" "95.216.162.71" yes
+probe_resource i3pro-cn "i3 Pro cloud CN" "https://i3pro.eu.iridi.com/" "95.216.162.71" yes
+probe_resource storage-cn "CN object storage" "https://ir-endpoint.oss-cn-shanghai.aliyuncs.com/" "106.14.228.182" yes
+probe_resource projects-cn "i3 Pro projects CN" "https://ir-proj-sh.oss-cn-shanghai.aliyuncs.com/" "106.14.228.182" yes
+probe_resource updates-site "Update service" "http://iridi.com/" "89.169.183.139" no
+probe_resource updates-cn "CN update files" "http://iridium3download.oss-cn-hangzhou.aliyuncs.com/" "118.178.60.104" no
+check_gate
+
+separator
+printf 'SUMMARY\n'
+printf '  Profile: %s\n' "$REGION"
+printf '  HTTP resources: %s of %s available, %s failed\n' "$OK_COUNT" "$TOTAL" "$FAIL_COUNT"
+printf '  Cloud Gate: %s\n' "$GATE_STATUS"
+printf '  Warnings: %s\n' "$WARN_COUNT"
+if [ "$FAIL_COUNT" -gt 0 ]; then
+  printf '  Conclusion: one or more required cloud resources are unavailable.\n'
+elif [ "$WARN_COUNT" -gt 0 ]; then
+  printf '  Conclusion: required HTTP resources are available, but some items require attention.\n'
+else
+  printf '  Conclusion: required cloud resources are available with no warnings.\n'
+fi
+
+separator
+printf 'SUMMARY %s: checked %s, available %s, failed %s, warnings %s\n' "$REGION" "$TOTAL" "$OK_COUNT" "$FAIL_COUNT" "$WARN_COUNT"
+if [ "$FAIL_COUNT" -gt 0 ]; then
+  printf 'RESULT: FAIL - NOT OK: one or more required cloud HTTP resources are unavailable.\n'
+  exit 2
+fi
+if [ "$WARN_COUNT" -gt 0 ]; then
+  printf 'RESULT: WARN - ATTENTION REQUIRED: HTTP resources are available, but warnings were found.\n'
+  exit 1
+fi
+printf 'RESULT: PASS - OK: required cloud resources are available.\n'
+exit 0
