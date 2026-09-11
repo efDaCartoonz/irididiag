@@ -71,7 +71,7 @@ Download and run a script with `wget`:
 
 ```sh
 cd /tmp
-wget --no-check-certificate https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/linux/check_bus77_home.sh
+wget --no-check-certificate -O check_bus77_home.sh https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/linux/check_bus77_home.sh
 sh check_bus77_home.sh
 ```
 
@@ -230,7 +230,7 @@ Download the current version with `wget`:
 
 ```sh
 cd /tmp
-wget --no-check-certificate https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/linux/check_emmc_health.sh
+wget --no-check-certificate -O check_emmc_health.sh https://raw.githubusercontent.com/efDaCartoonz/irididiag/main/scripts/linux/check_emmc_health.sh
 sh check_emmc_health.sh
 ```
 
